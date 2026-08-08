@@ -38,21 +38,10 @@ void FB_FuzzyController_Init(FB_FuzzyController_t *fb)
     fb->state.initialized = true;
 }
 
-/*
- * Active inference path:
- *
- *   SV/PV
- *      -> Adaptive Scaling
- *      -> Membership
- *      -> 7x7 Rule firing
- *      -> zero-order Sugeno weighted average
- *      -> absolute PWM 0..1000
- *
- * The rule table already contains crisp PWM singleton values. Therefore a
- * Mamdani centroid stage is deliberately NOT executed here.
- */
 float FB_FuzzyController_Run(FB_FuzzyController_t *fb, float SV, float PV)
 {
+    float rulePWM;
+
     if (fb == NULL) return 0.0f;
 
     if (!fb->state.initialized)
@@ -89,18 +78,25 @@ float FB_FuzzyController_Run(FB_FuzzyController_t *fb, float SV, float PV)
 
     FB_FuzzyRule_Run(&fb->ruleEngine, &fb->membership);
 
-    /* RuleOutput is an absolute PWM command, not a delta and not a fuzzy set. */
-    fb->state.PWM = FuzzyController_Clamp(
+    /* Rule output is an absolute PWM singleton, 0..1000. */
+    rulePWM = FuzzyController_Clamp(
         fb->ruleEngine.Result.RuleOutput,
         fb->config.OutputMin,
         fb->config.OutputMax
     );
 
+    /* Output Manager handles FF policy, slew limiting and final clamp. */
+    fb->state.PWM = FB_FuzzyOutput_RunAbsolute(
+        &fb->output,
+        SV,
+        rulePWM,
+        fb->config.Ts);
+
     /* Diagnostic normalized equivalent only; it is not used for control. */
     if (fb->config.OutputMax > fb->config.OutputMin + FUZZY_CONTROLLER_EPSILON)
     {
         fb->state.Centroid =
-            ((fb->state.PWM - fb->config.OutputMin) /
+            ((rulePWM - fb->config.OutputMin) /
              (fb->config.OutputMax - fb->config.OutputMin)) * 2.0f - 1.0f;
     }
     else
@@ -118,6 +114,12 @@ void FB_FuzzyController_Reset(FB_FuzzyController_t *fb)
     FB_FuzzyScaling_Reset(&fb->scaling);
     FB_FuzzyMembership_Reset(&fb->membership);
     FB_FuzzyRule_Reset(&fb->ruleEngine);
+
+    fb->output.state.pwmFF = 0.0f;
+    fb->output.state.fuzzyCorrection = 0.0f;
+    fb->output.state.targetPWM = 0.0f;
+    fb->output.state.outputPWM = 0.0f;
+    fb->output.state.previousPWM = 0.0f;
 
     fb->state.SV = 0.0f;
     fb->state.PV = 0.0f;
