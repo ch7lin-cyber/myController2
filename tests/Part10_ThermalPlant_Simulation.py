@@ -1,8 +1,8 @@
-"""Part 10 - closed-loop thermal plant simulation for myController2.
+"""Part 10 - thermal plant simulation scaffold for myController2.
 
-The plant is a first-order-plus-dead-time (FOPDT) approximation intended for
-controller verification, not hardware identification. The model parameters
-are explicit so measured identification data can replace them later.
+This model is intentionally a verification scaffold, not a replacement for
+measured system identification. Replace the parameters with identified data
+before using it to tune the production fuzzy controller.
 
 PWM: 0..1000 (0..100 %)
 Temperature: degC
@@ -37,8 +37,6 @@ class ThermalPlant:
         delayed_pwm = self._pwm_history.pop(0)
         duty = delayed_pwm / 1000.0
 
-        # Heating contribution is represented as a first-order approach to
-        # ambient + heater gain. loss_gain can later model temperature losses.
         target = self.ambient_c + self.gain_c_per_100pct * duty
         if self.loss_gain > 0.0:
             target -= self.loss_gain * max(0.0, self.temperature_c - self.ambient_c)
@@ -48,38 +46,48 @@ class ThermalPlant:
         return self.temperature_c
 
 
-def run_step_test(controller, sv, initial_pv, duration_s):
-    plant = ThermalPlant(temperature_c if False else 25.0)
-    # Keep construction explicit for Python versions without positional clarity.
+def run_closed_loop(controller, sv, initial_pv, duration_s, plant=None):
+    """Run a generic controller callback against the plant.
+
+    controller signature: controller(sv_c, pv_c) -> pwm_0_to_1000
+    Returns tuples of (time_s, sv_c, pv_c, pwm).
+    """
+    if plant is None:
+        plant = ThermalPlant()
+
     plant.reset(initial_pv)
     n = int(round(duration_s / plant.dt_s))
     log = []
+
     for k in range(n):
         pv = plant.temperature_c
         pwm = controller(sv, pv)
-        pv_next = plant.step(pwm)
+        pwm = max(0.0, min(1000.0, float(pwm)))
+        plant.step(pwm)
         log.append((k * plant.dt_s, sv, pv, pwm))
+
     return log
 
 
-def verify_plant_response():
-    """Run open-loop sanity checks used before closed-loop integration."""
+def verify_open_loop_step():
+    """Verify the first-order plant response before closed-loop testing."""
     plant = ThermalPlant()
     plant.reset(25.0)
+
     samples = []
-    for k in range(int(8.0 / plant.dt_s)):
+    n = int(round(8.0 / plant.dt_s))
+    for k in range(n):
         pv = plant.step(1000.0)
         samples.append((k * plant.dt_s, pv))
 
-    # At t=tau, a first-order response should reach about 63.2% of its final
-    # temperature rise. This is a model sanity check, not a controller limit.
+    # For a first-order model, t=tau is about 63.2% of the temperature rise.
     expected = 25.0 + 0.632 * 175.0
     actual = samples[-1][1]
-    return {"pv_at_8s": actual, "expected_first_order_at_tau": expected}
+    return actual, expected
 
 
 if __name__ == "__main__":
-    result = verify_plant_response()
+    actual, expected = verify_open_loop_step()
     print("Part 10 thermal plant sanity check")
-    print(f"PV after 8 s at 100% PWM: {result['pv_at_8s']:.3f} C")
-    print(f"FOPDT first-order reference: {result['expected_first_order_at_tau']:.3f} C")
+    print(f"PV after 8 s at 100% PWM: {actual:.3f} C")
+    print(f"First-order reference at tau: {expected:.3f} C")
