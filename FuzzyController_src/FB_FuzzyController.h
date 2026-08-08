@@ -31,19 +31,9 @@ extern "C" {
 #define FUZZY_INPUT_COUNT        (7U)
 
 /*
- * Linguistic index:
- * NB NM NS ZE PS PM PB
+ * The linguistic terms FUZZY_NB ... FUZZY_PB are defined by
+ * FB_FuzzyMembership.h and are intentionally not redefined here.
  */
-typedef enum
-{
-    FUZZY_NB = 0,
-    FUZZY_NM,
-    FUZZY_NS,
-    FUZZY_ZE,
-    FUZZY_PS,
-    FUZZY_PM,
-    FUZZY_PB
-} FuzzyTerm_t;
 
 /* Controller configuration. */
 typedef struct
