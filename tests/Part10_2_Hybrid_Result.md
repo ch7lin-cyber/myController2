@@ -1,5 +1,7 @@
 # Part 10-2 - Identified Plant + Feed-Forward + Fuzzy Correction + Bias Trim
 
+> **AUDIT NOTICE (2026-08-09):** The numerical replay below predates the correction of the plant's zero-MV equilibrium reference. The corrected plant now uses 25 degC as the reference equilibrium at MV=0, so the old 50/100/150/175 degC numerical results must be re-run before tuning or acceptance decisions. The hybrid architecture description remains valid.
+
 Branch: `branch1`
 
 ## Architecture
@@ -62,8 +64,7 @@ steady-state singleton.
 
 ## Independent numerical replay
 
-The same controller equations, hybrid output equations and identified plant
-coefficients were replayed independently for 180 s at Ts = 20 ms.
+The following values are retained for history only and are **stale after the plant-reference fix**:
 
 | SV (degC) | PV at 180 s (degC) | Error SV-PV (degC) | Maximum PV (degC) | Overshoot (degC) |
 |---:|---:|---:|---:|---:|
@@ -72,44 +73,13 @@ coefficients were replayed independently for 180 s at Ts = 20 ms.
 | 150 | 150.317 | -0.317 | 150.415 | +0.415 |
 | 175 | 168.633 | +6.367 | 168.633 | unreachable |
 
-## Comparison with Part 10-1
+## Architecture conclusion
 
-The hybrid strategy is materially better than pure absolute Sugeno PWM for the
-identified plant:
-
-- 50 degC: overshoot reduced into the <= 1 degC region in the numerical replay.
-- 100 degC: large steady-state bias is substantially reduced, but the 180 s
-  error is still about +1.0 degC.
-- 150 degC: steady-state bias is substantially reduced and overshoot remains
-  below 1 degC, but +/-0.1 degC is not yet achieved.
-- 175 degC: still impossible with the current plant model because the model's
-  100 percent-MV equilibrium is only about 168.63 degC.
-
-## Important conclusion
-
-Part 10-2 validates the **architecture direction**:
+The architecture direction remains:
 
 `identified FF + fuzzy transient correction + slow bias trim`
 
-is clearly more suitable than asking the absolute Sugeno rule table alone to
-provide both transient response and exact steady-state heater demand.
-
-However, the current Part 10-2 tuning is **not a final production tuning**.
-The +/-0.1 degC requirement is not yet met at 50, 100 or 150 degC in the
-180-second replay.
-
-## Why the 100 degC case still has error
-
-The fuzzy transient correction remains active near the setpoint and can oppose
-the plant-derived feed-forward value. A very slow integral/bias trim then needs
-time to compensate that residual offset.
-
-The next tuning step should therefore investigate one or both of:
-
-1. fading the fuzzy correction toward zero inside a small steady-state error
-   band, so the inverse plant feed-forward dominates close to SV;
-2. using a slightly stronger but bounded bias integrator only inside the
-   near-SV region, with anti-windup and bumpless reset.
+However, current performance must be re-measured against the corrected plant before any statement about overshoot or steady-state error is accepted.
 
 ## Source added in Part 10-2
 
@@ -119,11 +89,6 @@ The next tuning step should therefore investigate one or both of:
 - `ControllPlant/myPlant.h`
 - `ControllPlant/myPlant_1.c`
 
-The plant files are mirrored from `main/ControllPlant` into `branch1` so the
-Part 10 tests are self-contained on the test branch.
-
 ## Scope limitation
 
-The numerical values above are an independent mathematical replay of the source
-logic. This report does not claim target-MCU compilation or hardware-in-loop
-execution yet.
+This report does not claim target-MCU compilation or hardware-in-loop execution. After the plant audit fix, a new closed-loop replay is required.
