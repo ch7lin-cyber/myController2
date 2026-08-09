@@ -1,5 +1,7 @@
 # Part 10 - Closed-loop test with identified heater plant
 
+> **AUDIT NOTICE (2026-08-09):** The numerical results below were generated before the plant zero-MV equilibrium reference was corrected. The previous model drove MV=0 toward 0 degC at a 25 degC ambient; the corrected model now uses 25 degC as the zero-MV reference so MV=0 correctly settles at ambient. Therefore the numerical table and performance conclusions below must be re-run before being used for tuning or acceptance decisions. The controller/plant connection description remains valid.
+
 Branch: `branch1`
 
 Plant source: `main/ControllPlant/myPlant.h` + `main/ControllPlant/myPlant_1.c`
@@ -128,11 +130,6 @@ Recommended sequence:
 
 Part 10 closed-loop integration: PASS.
 
-Controller performance against identified plant: FAIL current performance
-requirements.
+Controller performance against identified plant: **REQUIRES RE-RUN after plant-reference audit fix.**
 
-Root causes found:
-
-- plant model maximum equilibrium below 175 C;
-- absolute-PWM fuzzy table has steady-state bias;
-- no integral/static inverse compensation currently active.
+Previously observed root causes remain useful hypotheses, but the old numerical values must not be treated as current verification data.
