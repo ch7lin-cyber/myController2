@@ -7,6 +7,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include "FB_FuzzyController.h"
 
 //------------------------------------------------------------------------------------//
 // C++ compatibility // DO NOT DELETE
@@ -57,9 +58,6 @@ typedef struct
     FuzzyRuntimeConfig_t config;
     bool changed;
 } FB_FuzzyConfigManager_t;
-
-/* Forward declaration; full definition is supplied by FB_FuzzyController.h. */
-typedef struct FB_FuzzyController FB_FuzzyController_t;
 
 void FB_FuzzyConfig_Init(FB_FuzzyConfigManager_t *fb);
 void FB_FuzzyConfig_LoadDefault(FB_FuzzyConfigManager_t *fb);
