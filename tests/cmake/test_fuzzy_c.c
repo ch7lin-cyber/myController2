@@ -3,6 +3,12 @@
 #include <stdio.h>
 
 #include "FB_FuzzyController.h"
+#include "FB_FuzzyScaling.h"
+#include "FB_FuzzyMembership.h"
+#include "FB_FuzzyRule.h"
+#include "FB_FuzzyDefuzzifier.h"
+#include "FB_FuzzyOutputManager.h"
+#include "FB_FuzzyHybridOutput.h"
 #include "FB_FuzzyConfigManager.h"
 
 int main(void)
@@ -25,6 +31,6 @@ int main(void)
     FB_FuzzyController_Reset(&controller);
     assert(controller.state.firstRun == true);
 
-    printf("C API smoke test: PASS (PWM=%.3f)\n", pwm);
+    printf("C all-header/API smoke test: PASS (PWM=%.3f)\n", pwm);
     return 0;
 }
