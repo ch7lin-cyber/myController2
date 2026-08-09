@@ -19,6 +19,16 @@ static bool FuzzyController_IsFinite(float value)
            (value > -FUZZY_CONTROLLER_FLOAT_MAX);
 }
 
+static void FuzzyController_ForceOutputMin(FB_FuzzyController_t *fb)
+{
+    fb->state.PWM = fb->config.OutputMin;
+    fb->output.state.pwmFF = 0.0f;
+    fb->output.state.fuzzyCorrection = 0.0f;
+    fb->output.state.targetPWM = fb->config.OutputMin;
+    fb->output.state.outputPWM = fb->config.OutputMin;
+    fb->output.state.previousPWM = fb->config.OutputMin;
+}
+
 void FB_FuzzyController_Init(FB_FuzzyController_t *fb)
 {
     if (fb == NULL) return;
@@ -42,6 +52,9 @@ void FB_FuzzyController_Init(FB_FuzzyController_t *fb)
     FB_FuzzyRule_Init(&fb->ruleEngine);
     FB_FuzzyOutput_Init(&fb->output);
 
+    /* Keep all time-based calculations on the same controller period. */
+    fb->scaling.Config.Ts = fb->config.Ts;
+
     FB_FuzzyController_LoadDefaultRule(fb);
     fb->state.initialized = true;
 }
@@ -62,21 +75,21 @@ float FB_FuzzyController_Run(FB_FuzzyController_t *fb, float SV, float PV)
         fb->state.PV = PV;
         fb->state.Error = 0.0f;
         fb->state.dError = 0.0f;
-        fb->state.PWM = fb->config.OutputMin;
-        fb->output.state.pwmFF = 0.0f;
-        fb->output.state.fuzzyCorrection = 0.0f;
-        fb->output.state.targetPWM = fb->config.OutputMin;
-        fb->output.state.outputPWM = fb->config.OutputMin;
-        fb->output.state.previousPWM = fb->config.OutputMin;
+        FuzzyController_ForceOutputMin(fb);
         fb->state.firstRun = true;
         return fb->state.PWM;
     }
 
     if (!fb->config.Enable)
     {
-        fb->state.PWM = fb->config.OutputMin;
+        /* A disabled heater controller must not retain a stale output state. */
+        FuzzyController_ForceOutputMin(fb);
+        fb->state.firstRun = true;
         return fb->state.PWM;
     }
+
+    /* Keep Scaling derivative/PV-rate timing synchronized with the controller. */
+    fb->scaling.Config.Ts = fb->config.Ts;
 
     fb->state.SV = SV;
     fb->state.PV = PV;
@@ -140,17 +153,12 @@ void FB_FuzzyController_Reset(FB_FuzzyController_t *fb)
     FB_FuzzyMembership_Reset(&fb->membership);
     FB_FuzzyRule_Reset(&fb->ruleEngine);
 
-    fb->output.state.pwmFF = 0.0f;
-    fb->output.state.fuzzyCorrection = 0.0f;
-    fb->output.state.targetPWM = 0.0f;
-    fb->output.state.outputPWM = 0.0f;
-    fb->output.state.previousPWM = 0.0f;
+    FuzzyController_ForceOutputMin(fb);
 
     fb->state.SV = 0.0f;
     fb->state.PV = 0.0f;
     fb->state.Error = 0.0f;
     fb->state.dError = 0.0f;
-    fb->state.PWM = fb->config.OutputMin;
     fb->state.Centroid = 0.0f;
     fb->state.firstRun = true;
 }
