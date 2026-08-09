@@ -17,9 +17,9 @@ extern "C" {
 #endif
 //------------------------------------------------------------------------------------//
 
-#define FUZZY_CONFIG_VERSION      0x0200
-#define FUZZY_RULE_SIZE           49
-#define FUZZY_CONFIG_MAGIC        0x55AA
+#define FUZZY_CONFIG_VERSION          0x0200
+#define FUZZY_CONFIG_RULE_COUNT       49U
+#define FUZZY_CONFIG_MAGIC            0x55AA
 
 typedef struct
 {
@@ -29,12 +29,15 @@ typedef struct
     float Peak;
 } FuzzyMFConfig_t;
 
+/* Runtime compact scaling representation used by the configuration manager.
+ * This is intentionally distinct from FuzzyScalingConfig_t in FB_FuzzyScaling.h.
+ */
 typedef struct
 {
     float errorScale;
     float dErrorScale;
     float Ku;
-} FuzzyScalingConfig_t;
+} FuzzyRuntimeScalingConfig_t;
 
 typedef struct
 {
@@ -49,7 +52,7 @@ typedef struct
     bool enable;
     FuzzyMFConfig_t MF[7];
     uint8_t rule[7][7];
-    FuzzyScalingConfig_t scaling;
+    FuzzyRuntimeScalingConfig_t scaling;
     FuzzyFFConfig_t ff[16];
     uint8_t ffSize;
 } FuzzyRuntimeConfig_t;
