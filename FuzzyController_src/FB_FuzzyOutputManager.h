@@ -14,6 +14,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include "ssm_std_define.h"
 
 //------------------------------------------------------------------------------------//
 // C++ compatibility // DO NOT DELETE
@@ -63,13 +64,13 @@ typedef struct
     FuzzyOutputState_t state;
 } FB_FuzzyOutputManager_t;
 
-void FB_FuzzyOutput_Init(FB_FuzzyOutputManager_t *fb);
-float FB_FuzzyOutput_RunAbsolute(FB_FuzzyOutputManager_t *fb, float sv, float fuzzyPWM, float Ts);
-float FB_FuzzyOutput_Run(FB_FuzzyOutputManager_t *fb, float sv, float pv, float centroid, float Ts);
-float FB_FuzzyOutput_CalcFF(FB_FuzzyOutputManager_t *fb, float temperature);
-float FB_FuzzyOutput_Interpolation(const FuzzyFFPoint_t *table, uint8_t size, float x);
-float FB_FuzzyOutput_Slew(float current, float target, float rate, float Ts);
-bool FB_FuzzyOutput_SetConfig(FB_FuzzyOutputManager_t *fb, const FuzzyOutputConfig_t *cfg);
+MY_API void FB_FuzzyOutput_Init(FB_FuzzyOutputManager_t *fb);
+MY_API float FB_FuzzyOutput_RunAbsolute(FB_FuzzyOutputManager_t *fb, float sv, float fuzzyPWM, float Ts);
+MY_API float FB_FuzzyOutput_Run(FB_FuzzyOutputManager_t *fb, float sv, float pv, float centroid, float Ts);
+MY_API float FB_FuzzyOutput_CalcFF(FB_FuzzyOutputManager_t *fb, float temperature);
+MY_API float FB_FuzzyOutput_Interpolation(const FuzzyFFPoint_t *table, uint8_t size, float x);
+MY_API float FB_FuzzyOutput_Slew(float current, float target, float rate, float Ts);
+MY_API bool FB_FuzzyOutput_SetConfig(FB_FuzzyOutputManager_t *fb, const FuzzyOutputConfig_t *cfg);
 
 //------------------------------------------------------------------------------------//
 // C++ compatibility
