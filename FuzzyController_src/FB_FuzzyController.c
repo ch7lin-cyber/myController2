@@ -3,12 +3,20 @@
 #include <stddef.h>
 
 #define FUZZY_CONTROLLER_EPSILON    (0.000001f)
+#define FUZZY_CONTROLLER_FLOAT_MAX  (3.402823466e+38F)
 
 static float FuzzyController_Clamp(float value, float minValue, float maxValue)
 {
     if (value < minValue) return minValue;
     if (value > maxValue) return maxValue;
     return value;
+}
+
+static bool FuzzyController_IsFinite(float value)
+{
+    return (value == value) &&
+           (value < FUZZY_CONTROLLER_FLOAT_MAX) &&
+           (value > -FUZZY_CONTROLLER_FLOAT_MAX);
 }
 
 void FB_FuzzyController_Init(FB_FuzzyController_t *fb)
@@ -46,6 +54,23 @@ float FB_FuzzyController_Run(FB_FuzzyController_t *fb, float SV, float PV)
 
     if (!fb->state.initialized)
         FB_FuzzyController_Init(fb);
+
+    /* Fail-safe: invalid process data must never produce heater output. */
+    if (!FuzzyController_IsFinite(SV) || !FuzzyController_IsFinite(PV))
+    {
+        fb->state.SV = SV;
+        fb->state.PV = PV;
+        fb->state.Error = 0.0f;
+        fb->state.dError = 0.0f;
+        fb->state.PWM = fb->config.OutputMin;
+        fb->output.state.pwmFF = 0.0f;
+        fb->output.state.fuzzyCorrection = 0.0f;
+        fb->output.state.targetPWM = fb->config.OutputMin;
+        fb->output.state.outputPWM = fb->config.OutputMin;
+        fb->output.state.previousPWM = fb->config.OutputMin;
+        fb->state.firstRun = true;
+        return fb->state.PWM;
+    }
 
     if (!fb->config.Enable)
     {
