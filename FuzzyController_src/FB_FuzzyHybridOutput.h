@@ -12,6 +12,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include "ssm_std_define.h"
 
 //------------------------------------------------------------------------------------//
 // C++ compatibility // DO NOT DELETE
@@ -61,11 +62,11 @@ typedef struct
     FuzzyHybridOutputState_t state;
 } FB_FuzzyHybridOutput_t;
 
-void FB_FuzzyHybridOutput_Init(FB_FuzzyHybridOutput_t *fb);
-void FB_FuzzyHybridOutput_Reset(FB_FuzzyHybridOutput_t *fb);
-bool FB_FuzzyHybridOutput_SetConfig(FB_FuzzyHybridOutput_t *fb, const FuzzyHybridOutputConfig_t *config);
-float FB_FuzzyHybridOutput_Run(FB_FuzzyHybridOutput_t *fb, float sv, float pv, float fuzzyPWM, float Ts);
-float FB_FuzzyHybridOutput_CalcFF(const FB_FuzzyHybridOutput_t *fb, float sv);
+MY_API void FB_FuzzyHybridOutput_Init(FB_FuzzyHybridOutput_t *fb);
+MY_API void FB_FuzzyHybridOutput_Reset(FB_FuzzyHybridOutput_t *fb);
+MY_API bool FB_FuzzyHybridOutput_SetConfig(FB_FuzzyHybridOutput_t *fb, const FuzzyHybridOutputConfig_t *config);
+MY_API float FB_FuzzyHybridOutput_Run(FB_FuzzyHybridOutput_t *fb, float sv, float pv, float fuzzyPWM, float Ts);
+MY_API float FB_FuzzyHybridOutput_CalcFF(const FB_FuzzyHybridOutput_t *fb, float sv);
 
 //------------------------------------------------------------------------------------//
 // C++ compatibility
