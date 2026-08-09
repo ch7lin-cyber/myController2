@@ -5,6 +5,7 @@
 
 #include "myPlant.h"
 
+#include <float.h>
 #include <math.h>
 #include <stddef.h>
 
@@ -37,12 +38,19 @@
 #define ID_TAU_80                (13.56f)
 
 #define DEFAULT_TAU_S            (15.0f)
+#define DEFAULT_SAMPLE_TIME_S    (0.02f)
 #define MIN_TAU_S                (0.10f)
 #define MAX_SAMPLE_TIME_S        (10.0f)
 #define MIN_SAMPLE_TIME_S        (0.0001f)
 
+static bool Plant_IsFinite(float value)
+{
+    return (value == value) && (value <= FLT_MAX) && (value >= -FLT_MAX);
+}
+
 static float clampf(float value, float low, float high)
 {
+    if (!Plant_IsFinite(value)) return low;
     if (value < low) return low;
     if (value > high) return high;
     return value;
@@ -106,6 +114,10 @@ void ThermalPlant_Init(ThermalPlant_t *plant,
 {
     if (plant == NULL) return;
 
+    if (!Plant_IsFinite(ambient_c)) ambient_c = ID_EQ_0;
+    if (!Plant_IsFinite(initial_temperature_c)) initial_temperature_c = ambient_c;
+    if (!Plant_IsFinite(sample_time_s)) sample_time_s = DEFAULT_SAMPLE_TIME_S;
+
     plant->temperature_c = initial_temperature_c;
     plant->ambient_c = ambient_c;
     plant->sample_time_s = clampf(sample_time_s,
@@ -121,6 +133,9 @@ void ThermalPlant_Reset(ThermalPlant_t *plant,
 {
     if (plant == NULL) return;
 
+    if (!Plant_IsFinite(initial_temperature_c))
+        initial_temperature_c = Plant_IsFinite(plant->ambient_c) ? plant->ambient_c : ID_EQ_0;
+
     plant->temperature_c = initial_temperature_c;
     plant->tau_s = DEFAULT_TAU_S;
     plant->mv_percent = 0.0f;
@@ -131,6 +146,7 @@ void ThermalPlant_SetSampleTime(ThermalPlant_t *plant,
 {
     if (plant == NULL) return;
 
+    if (!Plant_IsFinite(sample_time_s)) sample_time_s = DEFAULT_SAMPLE_TIME_S;
     plant->sample_time_s = clampf(sample_time_s,
                                   MIN_SAMPLE_TIME_S,
                                   MAX_SAMPLE_TIME_S);
@@ -145,6 +161,14 @@ float ThermalPlant_Step(ThermalPlant_t *plant,
     if ((plant == NULL) || !plant->initialized)
         return 0.0f;
 
+    /* Recover safely if external code corrupts a runtime state field. */
+    if (!Plant_IsFinite(plant->ambient_c)) plant->ambient_c = ID_EQ_0;
+    if (!Plant_IsFinite(plant->temperature_c)) plant->temperature_c = plant->ambient_c;
+    if (!Plant_IsFinite(plant->sample_time_s)) plant->sample_time_s = DEFAULT_SAMPLE_TIME_S;
+    plant->sample_time_s = clampf(plant->sample_time_s,
+                                  MIN_SAMPLE_TIME_S,
+                                  MAX_SAMPLE_TIME_S);
+
     plant->mv_percent = clampf(mv_percent,
                                PLANT_MIN_MV,
                                PLANT_MAX_MV);
@@ -155,7 +179,7 @@ float ThermalPlant_Step(ThermalPlant_t *plant,
     /*
      * The identification equilibrium curve is referenced to 25 degC.
      * Shift it to the configured ambient. Because ID_EQ_0 is 25 degC,
-     * MV=0 now correctly gives equilibrium_c == ambient_c.
+     * MV=0 correctly gives equilibrium_c == ambient_c.
      */
     equilibrium_c = ThermalPlant_GetEquilibrium(plant->mv_percent) +
                     plant->ambient_c - ID_EQ_0;
@@ -163,8 +187,13 @@ float ThermalPlant_Step(ThermalPlant_t *plant,
     /* Exact ZOH discretization of dT/dt = (T_eq - T) / tau. */
     alpha = 1.0f - expf(-plant->sample_time_s / plant->tau_s);
 
+    if (!Plant_IsFinite(alpha)) alpha = 0.0f;
+
     plant->temperature_c +=
         alpha * (equilibrium_c - plant->temperature_c);
+
+    if (!Plant_IsFinite(plant->temperature_c))
+        plant->temperature_c = plant->ambient_c;
 
     return plant->temperature_c;
 }
@@ -173,7 +202,7 @@ int16_t ThermalPlant_GetTemperature_x10(const ThermalPlant_t *plant)
 {
     float value;
 
-    if (plant == NULL) return 0;
+    if ((plant == NULL) || !Plant_IsFinite(plant->temperature_c)) return 0;
 
     value = plant->temperature_c * 10.0f;
 
