@@ -1,16 +1,16 @@
 /******************************************************************************
  * File    : FB_FuzzyController.h
- *
- * Version : V2.1
- *
- * Brief:
- *   IEC61131-3 Style Fuzzy Temperature Controller
+ * Version : V2.2
+ * Brief   : IEC61131-3 Style Fuzzy Temperature Controller
  *
  * Execution chain:
- *   SV/PV -> Adaptive Scaling -> Membership -> 7x7 Rule -> PWM Output
+ *   SV/PV -> Adaptive Scaling -> Membership -> 7x7 Sugeno Rule -> PWM
  *
+ * NOTE:
+ *   The active controller uses zero-order Sugeno/singleton inference.
+ *   Rule outputs are absolute PWM commands (0..1000). A second Mamdani
+ *   defuzzification stage must NOT be inserted into this active path.
  ******************************************************************************/
-
 #ifndef FB_FUZZY_CONTROLLER_H
 #define FB_FUZZY_CONTROLLER_H
 
@@ -20,22 +20,14 @@ extern "C" {
 
 #include <stdint.h>
 #include <stdbool.h>
-
 #include "FB_FuzzyScaling.h"
 #include "FB_FuzzyMembership.h"
 #include "FB_FuzzyRule.h"
-#include "FB_FuzzyDefuzzifier.h"
 #include "FB_FuzzyOutputManager.h"
 
 #define FUZZY_CONTROLLER_TS      (0.020f)
 #define FUZZY_INPUT_COUNT        (7U)
 
-/*
- * The linguistic terms FUZZY_NB ... FUZZY_PB are defined by
- * FB_FuzzyMembership.h and are intentionally not redefined here.
- */
-
-/* Controller configuration. */
 typedef struct
 {
     float Ts;
@@ -44,7 +36,6 @@ typedef struct
     float OutputMax;
 } FuzzyControllerConfig_t;
 
-/* Controller runtime state. */
 typedef struct
 {
     float SV;
@@ -57,52 +48,25 @@ typedef struct
     bool firstRun;
 } FuzzyControllerState_t;
 
-/* Main Function Block. */
 typedef struct
 {
     FuzzyControllerConfig_t config;
     FuzzyControllerState_t state;
-
-    /* Function Blocks. */
     FB_FuzzyScaling_t scaling;
     FB_FuzzyMembership_t membership;
     FB_FuzzyRule_t ruleEngine;
-    FB_FuzzyDefuzzifier_t defuzz;
     FB_FuzzyOutputManager_t output;
 } FB_FuzzyController_t;
 
-/* Initialize controller. */
-void FB_FuzzyController_Init(
-    FB_FuzzyController_t *fb
-);
+void FB_FuzzyController_Init(FB_FuzzyController_t *fb);
 
-/*
- * Execute controller.
- * Must be called at the configured controller period, default 20 ms.
- *
- * Return value:
- *   PWM command in the configured range, default 0 ~ 1000.
- */
-float FB_FuzzyController_Run(
-    FB_FuzzyController_t *fb,
-    float SV,
-    float PV
-);
+/* Execute at the configured controller period, default 20 ms. */
+/* Return value is an absolute PWM command, default 0..1000. */
+float FB_FuzzyController_Run(FB_FuzzyController_t *fb, float SV, float PV);
 
-/* Reset controller runtime state. */
-void FB_FuzzyController_Reset(
-    FB_FuzzyController_t *fb
-);
+void FB_FuzzyController_Reset(FB_FuzzyController_t *fb);
+void FB_FuzzyController_LoadDefaultRule(FB_FuzzyController_t *fb);
 
-/* Load the default 7x7 heater rule table. */
-void FB_FuzzyController_LoadDefaultRule(
-    FB_FuzzyController_t *fb
-);
-
-/*
- * Update one rule.
- * outputPWM is an absolute PWM command in the range 0 ~ 1000.
- */
 bool FB_FuzzyController_SetRule(
     FB_FuzzyController_t *fb,
     uint8_t errorIndex,

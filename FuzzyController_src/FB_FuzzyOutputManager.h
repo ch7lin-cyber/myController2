@@ -1,170 +1,76 @@
 /******************************************************************************
- * File:
- *      FB_FuzzyOutputManager.h
+ * File    : FB_FuzzyOutputManager.h
+ * Brief   : Absolute PWM output manager for zero-order Sugeno fuzzy control
  *
- * Brief:
- *      Fuzzy Correction + FeedForward PWM Manager
+ * Active path:
+ *   FF (optional blend) + absolute fuzzy PWM -> clamp -> slew -> PWM
  *
+ * IMPORTANT:
+ *   The active Fuzzy Rule Engine already returns an absolute PWM command
+ *   (0..1000). It must NOT be multiplied by fuzzyScale or treated as dPWM.
  ******************************************************************************/
-
 #ifndef FB_FUZZY_OUTPUT_MANAGER_H
 #define FB_FUZZY_OUTPUT_MANAGER_H
-
 
 #include <stdint.h>
 #include <stdbool.h>
 
-
-#define FUZZY_PWM_MIN          0
-#define FUZZY_PWM_MAX          1000
-
-
-#define FUZZY_FF_TABLE_SIZE    16
-
-
-
-/*
- * FeedForward lookup table
- */
+#define FUZZY_PWM_MIN          0.0f
+#define FUZZY_PWM_MAX          1000.0f
+#define FUZZY_FF_TABLE_SIZE    16U
 
 typedef struct
 {
     float temperature;
-
     float pwm;
-
 } FuzzyFFPoint_t;
 
-
-
-/*
- * Configuration
- */
-
 typedef struct
 {
-
-    /*
-     * Fuzzy correction gain
-     *
-     * centroid:
-     *
-     * -1 ~ +1
-     *
-     * multiply this
-     */
-
+    /* Legacy diagnostic gain; not used on the absolute Sugeno path. */
     float fuzzyScale;
 
-
-
-    /*
-     * PWM limit
-     */
-
     float pwmMin;
-
     float pwmMax;
 
-
-
-    /*
-     * Output slew
-     */
-
+    /* PWM units / second. At 20 ms, 5000 = 100 PWM counts / cycle. */
     float slewRate;
 
-
-
-    /*
-     * FeedForward table
-     */
-
-    FuzzyFFPoint_t ffTable[
-        FUZZY_FF_TABLE_SIZE
-    ];
-
-
+    FuzzyFFPoint_t ffTable[FUZZY_FF_TABLE_SIZE];
     uint8_t ffSize;
 
-
-
     bool enableFeedForward;
-
-
     bool enableSlew;
 
-
-}FuzzyOutputConfig_t;
-
-
-
-/*
- * Runtime
- */
+    /* 0.0 = pure fuzzy PWM, 1.0 = pure FF PWM. */
+    float ffBlend;
+} FuzzyOutputConfig_t;
 
 typedef struct
 {
-
-
     float pwmFF;
-
-
     float fuzzyCorrection;
-
-
     float targetPWM;
-
-
     float outputPWM;
-
-
-
     float previousPWM;
-
-
-
-}FuzzyOutputState_t;
-
-
-
-/*
- * Function Block
- */
+} FuzzyOutputState_t;
 
 typedef struct
 {
-
     FuzzyOutputConfig_t config;
-
-
     FuzzyOutputState_t state;
+} FB_FuzzyOutputManager_t;
 
+void FB_FuzzyOutput_Init(FB_FuzzyOutputManager_t *fb);
 
-}FB_FuzzyOutputManager_t;
+/* Absolute fuzzy PWM path. fuzzyPWM is 0..1000, not -1..+1 and not dPWM. */
+float FB_FuzzyOutput_RunAbsolute(
+        FB_FuzzyOutputManager_t *fb,
+        float sv,
+        float fuzzyPWM,
+        float Ts);
 
-
-
-/*
- * Init
- */
-
-void FB_FuzzyOutput_Init(
-        FB_FuzzyOutputManager_t *fb);
-
-
-
-/*
- * Main execute
- *
- * centroid:
- *
- * -1 ~ +1
- *
- * from Part4
- *
- */
-
+/* Legacy API retained for compatibility. Interprets centroid as -1..+1. */
 float FB_FuzzyOutput_Run(
         FB_FuzzyOutputManager_t *fb,
         float sv,
@@ -172,32 +78,14 @@ float FB_FuzzyOutput_Run(
         float centroid,
         float Ts);
 
-
-
-/*
- * FeedForward calculation
- */
-
 float FB_FuzzyOutput_CalcFF(
         FB_FuzzyOutputManager_t *fb,
         float temperature);
 
-
-
-/*
- * Linear interpolation
- */
-
 float FB_FuzzyOutput_Interpolation(
-        FuzzyFFPoint_t *table,
+        const FuzzyFFPoint_t *table,
         uint8_t size,
         float x);
-
-
-
-/*
- * Slew limiter
- */
 
 float FB_FuzzyOutput_Slew(
         float current,
@@ -205,16 +93,8 @@ float FB_FuzzyOutput_Slew(
         float rate,
         float Ts);
 
-
-
-/*
- * Configuration
- */
-
 bool FB_FuzzyOutput_SetConfig(
         FB_FuzzyOutputManager_t *fb,
-        FuzzyOutputConfig_t *cfg);
+        const FuzzyOutputConfig_t *cfg);
 
-
-
-#endif
+#endif /* FB_FUZZY_OUTPUT_MANAGER_H */

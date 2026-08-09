@@ -3,37 +3,25 @@
 #include <stddef.h>
 
 #define FUZZY_CONTROLLER_EPSILON    (0.000001f)
+#define FUZZY_CONTROLLER_FLOAT_MAX  (3.402823466e+38F)
 
-static float FuzzyController_Clamp(
-    float value,
-    float minValue,
-    float maxValue
-)
+static float FuzzyController_Clamp(float value, float minValue, float maxValue)
 {
-    if (value < minValue)
-    {
-        return minValue;
-    }
-
-    if (value > maxValue)
-    {
-        return maxValue;
-    }
-
+    if (value < minValue) return minValue;
+    if (value > maxValue) return maxValue;
     return value;
 }
 
-/*
- * Initialize
- */
-void FB_FuzzyController_Init(
-    FB_FuzzyController_t *fb
-)
+static bool FuzzyController_IsFinite(float value)
 {
-    if (fb == NULL)
-    {
-        return;
-    }
+    return (value == value) &&
+           (value < FUZZY_CONTROLLER_FLOAT_MAX) &&
+           (value > -FUZZY_CONTROLLER_FLOAT_MAX);
+}
+
+void FB_FuzzyController_Init(FB_FuzzyController_t *fb)
+{
+    if (fb == NULL) return;
 
     fb->config.Ts = FUZZY_CONTROLLER_TS;
     fb->config.Enable = true;
@@ -52,60 +40,36 @@ void FB_FuzzyController_Init(
     FB_FuzzyScaling_Init(&fb->scaling);
     FB_FuzzyMembership_Init(&fb->membership);
     FB_FuzzyRule_Init(&fb->ruleEngine);
-    FB_FuzzyDefuzzifier_Init(&fb->defuzz);
     FB_FuzzyOutput_Init(&fb->output);
 
     FB_FuzzyController_LoadDefaultRule(fb);
-
     fb->state.initialized = true;
 }
 
-/*
- * Execute
- *
- * Signal flow:
- *
- *   SV/PV
- *      |
- *      v
- *   Scaling
- *      |
- *      +--> normalized Error
- *      +--> normalized dError
- *      |
- *      v
- *   Membership
- *      |
- *      v
- *   7x7 Mamdani Rule Engine
- *      |
- *      v
- *   Weighted PWM rule output
- *      |
- *      v
- *   Output clamp
- *
- * NOTE:
- * The current FB_FuzzyRule implementation defines its rule table as
- * absolute PWM commands (0 ~ 1000), not linguistic output terms.
- * Therefore the controller intentionally uses RuleOutput directly here.
- * The Defuzzifier and OutputManager remain owned by the controller for the
- * next integration stage, but are not mixed into this absolute-PWM path.
- */
-float FB_FuzzyController_Run(
-    FB_FuzzyController_t *fb,
-    float SV,
-    float PV
-)
+float FB_FuzzyController_Run(FB_FuzzyController_t *fb, float SV, float PV)
 {
-    if (fb == NULL)
-    {
-        return 0.0f;
-    }
+    float rulePWM;
+
+    if (fb == NULL) return 0.0f;
 
     if (!fb->state.initialized)
-    {
         FB_FuzzyController_Init(fb);
+
+    /* Fail-safe: invalid process data must never produce heater output. */
+    if (!FuzzyController_IsFinite(SV) || !FuzzyController_IsFinite(PV))
+    {
+        fb->state.SV = SV;
+        fb->state.PV = PV;
+        fb->state.Error = 0.0f;
+        fb->state.dError = 0.0f;
+        fb->state.PWM = fb->config.OutputMin;
+        fb->output.state.pwmFF = 0.0f;
+        fb->output.state.fuzzyCorrection = 0.0f;
+        fb->output.state.targetPWM = fb->config.OutputMin;
+        fb->output.state.outputPWM = fb->config.OutputMin;
+        fb->output.state.previousPWM = fb->config.OutputMin;
+        fb->state.firstRun = true;
+        return fb->state.PWM;
     }
 
     if (!fb->config.Enable)
@@ -114,15 +78,11 @@ float FB_FuzzyController_Run(
         return fb->state.PWM;
     }
 
-    /* Store inputs. */
     fb->state.SV = SV;
     fb->state.PV = PV;
     fb->state.Error = SV - PV;
 
-    /*
-     * Prevent an artificial derivative spike on the first controller cycle.
-     * Scaling normally calculates dError from its previous state.
-     */
+    /* Avoid an artificial derivative spike on the first cycle. */
     if (fb->state.firstRun)
     {
         fb->scaling.State.PreviousError = fb->state.Error;
@@ -130,48 +90,38 @@ float FB_FuzzyController_Run(
         fb->state.firstRun = false;
     }
 
-    /* Part 3: adaptive scaling and normalization. */
-    FB_FuzzyScaling_Run(
-        &fb->scaling,
-        SV,
-        PV
-    );
+    FB_FuzzyScaling_Run(&fb->scaling, SV, PV);
 
     fb->state.Error = fb->scaling.State.Error;
     fb->state.dError = fb->scaling.State.dError;
 
-    /* Part 1: membership calculation. */
     FB_FuzzyMembership_Run(
         &fb->membership,
         fb->scaling.State.NormalizedError,
         fb->scaling.State.NormalizedDError
     );
 
-    /* Part 2: 7x7 Mamdani rule evaluation. */
-    FB_FuzzyRule_Run(
-        &fb->ruleEngine,
-        &fb->membership
-    );
+    FB_FuzzyRule_Run(&fb->ruleEngine, &fb->membership);
 
-    /*
-     * The Rule Engine currently returns a weighted-average absolute PWM
-     * command. Keep this representation intact and clamp at the controller
-     * boundary.
-     */
-    fb->state.PWM = FuzzyController_Clamp(
+    /* Rule output is an absolute PWM singleton, 0..1000. */
+    rulePWM = FuzzyController_Clamp(
         fb->ruleEngine.Result.RuleOutput,
         fb->config.OutputMin,
         fb->config.OutputMax
     );
 
-    /*
-     * Diagnostic normalized centroid equivalent for callers/telemetry.
-     * It is not fed into OutputManager because RuleOutput is absolute PWM.
-     */
+    /* Output Manager handles FF policy, slew limiting and final clamp. */
+    fb->state.PWM = FB_FuzzyOutput_RunAbsolute(
+        &fb->output,
+        SV,
+        rulePWM,
+        fb->config.Ts);
+
+    /* Diagnostic normalized equivalent only; it is not used for control. */
     if (fb->config.OutputMax > fb->config.OutputMin + FUZZY_CONTROLLER_EPSILON)
     {
         fb->state.Centroid =
-            ((fb->state.PWM - fb->config.OutputMin) /
+            ((rulePWM - fb->config.OutputMin) /
              (fb->config.OutputMax - fb->config.OutputMin)) * 2.0f - 1.0f;
     }
     else
@@ -182,22 +132,19 @@ float FB_FuzzyController_Run(
     return fb->state.PWM;
 }
 
-/*
- * Reset
- */
-void FB_FuzzyController_Reset(
-    FB_FuzzyController_t *fb
-)
+void FB_FuzzyController_Reset(FB_FuzzyController_t *fb)
 {
-    if (fb == NULL)
-    {
-        return;
-    }
+    if (fb == NULL) return;
 
     FB_FuzzyScaling_Reset(&fb->scaling);
     FB_FuzzyMembership_Reset(&fb->membership);
     FB_FuzzyRule_Reset(&fb->ruleEngine);
-    FB_FuzzyDefuzzifier_Reset(&fb->defuzz);
+
+    fb->output.state.pwmFF = 0.0f;
+    fb->output.state.fuzzyCorrection = 0.0f;
+    fb->output.state.targetPWM = 0.0f;
+    fb->output.state.outputPWM = 0.0f;
+    fb->output.state.previousPWM = 0.0f;
 
     fb->state.SV = 0.0f;
     fb->state.PV = 0.0f;
@@ -208,35 +155,19 @@ void FB_FuzzyController_Reset(
     fb->state.firstRun = true;
 }
 
-/*
- * Default Rule
- */
-void FB_FuzzyController_LoadDefaultRule(
-    FB_FuzzyController_t *fb
-)
+void FB_FuzzyController_LoadDefaultRule(FB_FuzzyController_t *fb)
 {
-    if (fb == NULL)
-    {
-        return;
-    }
-
+    if (fb == NULL) return;
     FB_FuzzyRule_LoadDefault(&fb->ruleEngine);
 }
 
-/*
- * Update Rule Runtime
- */
 bool FB_FuzzyController_SetRule(
     FB_FuzzyController_t *fb,
     uint8_t errorIndex,
     uint8_t dErrorIndex,
-    int16_t outputPWM
-)
+    int16_t outputPWM)
 {
-    if (fb == NULL)
-    {
-        return false;
-    }
+    if (fb == NULL) return false;
 
     return FB_FuzzyRule_SetRule(
         &fb->ruleEngine,
