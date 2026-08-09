@@ -4,6 +4,8 @@
 
 #define FUZZY_CONTROLLER_EPSILON    (0.000001f)
 #define FUZZY_CONTROLLER_FLOAT_MAX  (3.402823466e+38F)
+#define FUZZY_CONTROLLER_PWM_MIN    (0.0f)
+#define FUZZY_CONTROLLER_PWM_MAX    (1000.0f)
 
 static float FuzzyController_Clamp(float value, float minValue, float maxValue)
 {
@@ -19,14 +21,49 @@ static bool FuzzyController_IsFinite(float value)
            (value > -FUZZY_CONTROLLER_FLOAT_MAX);
 }
 
+static float FuzzyController_GetSafeOutputMin(const FB_FuzzyController_t *fb)
+{
+    if ((fb != NULL) &&
+        FuzzyController_IsFinite(fb->config.OutputMin) &&
+        (fb->config.OutputMin >= FUZZY_CONTROLLER_PWM_MIN) &&
+        (fb->config.OutputMin <= FUZZY_CONTROLLER_PWM_MAX))
+    {
+        return fb->config.OutputMin;
+    }
+
+    return FUZZY_CONTROLLER_PWM_MIN;
+}
+
+static bool FuzzyController_IsConfigValid(const FB_FuzzyController_t *fb)
+{
+    if (fb == NULL) return false;
+
+    if (!FuzzyController_IsFinite(fb->config.Ts) ||
+        (fb->config.Ts <= FUZZY_CONTROLLER_EPSILON))
+        return false;
+
+    if (!FuzzyController_IsFinite(fb->config.OutputMin) ||
+        !FuzzyController_IsFinite(fb->config.OutputMax))
+        return false;
+
+    if ((fb->config.OutputMin < FUZZY_CONTROLLER_PWM_MIN) ||
+        (fb->config.OutputMax > FUZZY_CONTROLLER_PWM_MAX) ||
+        (fb->config.OutputMin >= fb->config.OutputMax))
+        return false;
+
+    return true;
+}
+
 static void FuzzyController_ForceOutputMin(FB_FuzzyController_t *fb)
 {
-    fb->state.PWM = fb->config.OutputMin;
+    const float safeMin = FuzzyController_GetSafeOutputMin(fb);
+
+    fb->state.PWM = safeMin;
     fb->output.state.pwmFF = 0.0f;
     fb->output.state.fuzzyCorrection = 0.0f;
-    fb->output.state.targetPWM = fb->config.OutputMin;
-    fb->output.state.outputPWM = fb->config.OutputMin;
-    fb->output.state.previousPWM = fb->config.OutputMin;
+    fb->output.state.targetPWM = safeMin;
+    fb->output.state.outputPWM = safeMin;
+    fb->output.state.previousPWM = safeMin;
 }
 
 void FB_FuzzyController_Init(FB_FuzzyController_t *fb)
@@ -35,8 +72,8 @@ void FB_FuzzyController_Init(FB_FuzzyController_t *fb)
 
     fb->config.Ts = FUZZY_CONTROLLER_TS;
     fb->config.Enable = true;
-    fb->config.OutputMin = 0.0f;
-    fb->config.OutputMax = 1000.0f;
+    fb->config.OutputMin = FUZZY_CONTROLLER_PWM_MIN;
+    fb->config.OutputMax = FUZZY_CONTROLLER_PWM_MAX;
 
     fb->state.SV = 0.0f;
     fb->state.PV = 0.0f;
@@ -52,8 +89,10 @@ void FB_FuzzyController_Init(FB_FuzzyController_t *fb)
     FB_FuzzyRule_Init(&fb->ruleEngine);
     FB_FuzzyOutput_Init(&fb->output);
 
-    /* Keep all time-based calculations on the same controller period. */
+    /* Keep all time/output limits on the same controller configuration. */
     fb->scaling.Config.Ts = fb->config.Ts;
+    fb->output.config.pwmMin = fb->config.OutputMin;
+    fb->output.config.pwmMax = fb->config.OutputMax;
 
     FB_FuzzyController_LoadDefaultRule(fb);
     fb->state.initialized = true;
@@ -67,6 +106,16 @@ float FB_FuzzyController_Run(FB_FuzzyController_t *fb, float SV, float PV)
 
     if (!fb->state.initialized)
         FB_FuzzyController_Init(fb);
+
+    /* Fail-safe: invalid controller configuration must never drive the heater. */
+    if (!FuzzyController_IsConfigValid(fb))
+    {
+        FuzzyController_ForceOutputMin(fb);
+        fb->state.Error = 0.0f;
+        fb->state.dError = 0.0f;
+        fb->state.firstRun = true;
+        return fb->state.PWM;
+    }
 
     /* Fail-safe: invalid process data must never produce heater output. */
     if (!FuzzyController_IsFinite(SV) || !FuzzyController_IsFinite(PV))
@@ -88,8 +137,10 @@ float FB_FuzzyController_Run(FB_FuzzyController_t *fb, float SV, float PV)
         return fb->state.PWM;
     }
 
-    /* Keep Scaling derivative/PV-rate timing synchronized with the controller. */
+    /* Synchronize dependent blocks with the public controller configuration. */
     fb->scaling.Config.Ts = fb->config.Ts;
+    fb->output.config.pwmMin = fb->config.OutputMin;
+    fb->output.config.pwmMax = fb->config.OutputMax;
 
     fb->state.SV = SV;
     fb->state.PV = PV;
