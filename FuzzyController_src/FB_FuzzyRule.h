@@ -16,13 +16,17 @@
 #ifndef FB_FUZZY_RULE_H
 #define FB_FUZZY_RULE_H
 
+#include <stdint.h>
+#include <stdbool.h>
+#include "ssm_std_define.h"
+#include "FB_FuzzyMembership.h"
+
+//------------------------------------------------------------------------------------//
+// C++ compatibility // DO NOT DELETE
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-#include <stdint.h>
-#include <stdbool.h>
-#include "FB_FuzzyMembership.h"
+//------------------------------------------------------------------------------------//
 
 #define FUZZY_RULE_SIZE        (7U)
 #define FUZZY_RULE_COUNT       (49U)
@@ -51,8 +55,8 @@ typedef struct
     bool Initialized;
 } FB_FuzzyRule_t;
 
-void FB_FuzzyRule_Init(FB_FuzzyRule_t *fb);
-void FB_FuzzyRule_Reset(FB_FuzzyRule_t *fb);
+MY_API void FB_FuzzyRule_Init(FB_FuzzyRule_t *fb);
+MY_API void FB_FuzzyRule_Reset(FB_FuzzyRule_t *fb);
 
 /**
  * Execute zero-order Sugeno inference.
@@ -60,42 +64,45 @@ void FB_FuzzyRule_Reset(FB_FuzzyRule_t *fb);
  * Weight = MIN(Membership(Error), Membership(dError))
  * RuleOutput = SUM(Weight * SingletonOutput) / SUM(Weight)
  */
-void FB_FuzzyRule_Run(FB_FuzzyRule_t *fb,
-                      const FB_FuzzyMembership_t *membership);
+MY_API void FB_FuzzyRule_Run(FB_FuzzyRule_t *fb,
+                             const FB_FuzzyMembership_t *membership);
 
-bool FB_FuzzyRule_SetRule(FB_FuzzyRule_t *fb,
-                          uint8_t errorIndex,
-                          uint8_t dErrorIndex,
-                          int16_t output);
+MY_API bool FB_FuzzyRule_SetRule(FB_FuzzyRule_t *fb,
+                                 uint8_t errorIndex,
+                                 uint8_t dErrorIndex,
+                                 int16_t output);
 
-bool FB_FuzzyRule_GetRule(const FB_FuzzyRule_t *fb,
-                          uint8_t errorIndex,
-                          uint8_t dErrorIndex,
-                          int16_t *output);
+MY_API bool FB_FuzzyRule_GetRule(const FB_FuzzyRule_t *fb,
+                                 uint8_t errorIndex,
+                                 uint8_t dErrorIndex,
+                                 int16_t *output);
 
-bool FB_FuzzyRule_SetTable(FB_FuzzyRule_t *fb,
-                           const FuzzyRuleTable_t *table);
+MY_API bool FB_FuzzyRule_SetTable(FB_FuzzyRule_t *fb,
+                                  const FuzzyRuleTable_t *table);
 
-bool FB_FuzzyRule_GetTable(const FB_FuzzyRule_t *fb,
-                           FuzzyRuleTable_t *table);
+MY_API bool FB_FuzzyRule_GetTable(const FB_FuzzyRule_t *fb,
+                                  FuzzyRuleTable_t *table);
 
-void FB_FuzzyRule_LoadDefault(FB_FuzzyRule_t *fb);
+MY_API void FB_FuzzyRule_LoadDefault(FB_FuzzyRule_t *fb);
 
 /**
  * Validate output range and heater monotonicity.
  * Increasing Error or dError must not decrease PWM.
  */
-bool FB_FuzzyRule_Validate(const FuzzyRuleTable_t *table);
+MY_API bool FB_FuzzyRule_Validate(const FuzzyRuleTable_t *table);
 
-void FB_FuzzyRule_Enable(FB_FuzzyRule_t *fb);
-void FB_FuzzyRule_Disable(FB_FuzzyRule_t *fb);
-bool FB_FuzzyRule_IsEnabled(const FB_FuzzyRule_t *fb);
+MY_API void FB_FuzzyRule_Enable(FB_FuzzyRule_t *fb);
+MY_API void FB_FuzzyRule_Disable(FB_FuzzyRule_t *fb);
+MY_API bool FB_FuzzyRule_IsEnabled(const FB_FuzzyRule_t *fb);
 
-uint8_t FB_FuzzyRule_GetIndex(uint8_t errorIndex,
-                              uint8_t dErrorIndex);
+MY_API uint8_t FB_FuzzyRule_GetIndex(uint8_t errorIndex,
+                                     uint8_t dErrorIndex);
 
+//------------------------------------------------------------------------------------//
+// C++ compatibility
 #ifdef __cplusplus
 }
 #endif
+//------------------------------------------------------------------------------------//
 
 #endif /* FB_FUZZY_RULE_H */
