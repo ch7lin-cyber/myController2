@@ -2,7 +2,18 @@
 #include <cmath>
 #include <iostream>
 
+/*
+ * Intentionally include the C headers directly from C++ WITHOUT wrapping
+ * them in an external extern "C" block. Each public header must provide its
+ * own C++ compatibility guard.
+ */
 #include "FB_FuzzyController.h"
+#include "FB_FuzzyScaling.h"
+#include "FB_FuzzyMembership.h"
+#include "FB_FuzzyRule.h"
+#include "FB_FuzzyDefuzzifier.h"
+#include "FB_FuzzyOutputManager.h"
+#include "FB_FuzzyHybridOutput.h"
 #include "FB_FuzzyConfigManager.h"
 
 int main()
@@ -21,6 +32,6 @@ int main()
     assert(pwm >= controller.config.OutputMin);
     assert(pwm <= controller.config.OutputMax);
 
-    std::cout << "C++ header/linkage smoke test: PASS (PWM=" << pwm << ")\n";
+    std::cout << "C++ all-header/linkage smoke test: PASS (PWM=" << pwm << ")\n";
     return 0;
 }
