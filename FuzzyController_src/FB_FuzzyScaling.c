@@ -1,20 +1,20 @@
 /******************************************************************************
  * File    : FB_FuzzyScaling.c
- * Version : V2.1
+ * Version : V2.2
  *
  * Brief   : Auto / Adaptive Scaling Engine
  *
- * Notes:
- *   - Controller Ts = 20 ms / 50 Hz
- *   - Error and dError are normalized to -1.0 ... +1.0
- *   - Error window is now actually applied to the current scaling state.
- *   - Runtime gains use slew limiting.
- *   - Ku is retained as an adaptive diagnostic/output-scaling gain. The
- *     current absolute-PWM Rule Engine does not consume Ku yet.
+ * Safety revision:
+ *   - Reject NaN / +/-Inf configuration values.
+ *   - Reject invalid SV/PV at runtime without propagating NaN/Inf.
+ *   - Reject invalid public calculation inputs.
+ *   - Preserve the last valid state when an input sample is invalid.
+ *   - Error window adaptation is applied to the runtime state.
  ******************************************************************************/
 
 #include "FB_FuzzyScaling.h"
 #include <stddef.h>
+#include <float.h>
 
 #define FUZZY_SCALING_EPSILON             (0.000001f)
 #define FUZZY_SCALING_ERROR_RATIO         (1.50f)
@@ -26,6 +26,12 @@
 #define FUZZY_SCALING_ERROR_WINDOW_SLEW   (100.0f)
 #define FUZZY_SCALING_KE_SLEW_RATE        (5.0f)
 #define FUZZY_SCALING_KDE_SLEW_RATE       (5.0f)
+
+static bool FuzzyScaling_IsFinite(float x)
+{
+    /* Portable embedded-C finite check; does not require C99 isfinite(). */
+    return ((x == x) && (x <= FLT_MAX) && (x >= -FLT_MAX));
+}
 
 static float FuzzyScaling_Abs(float x)
 {
@@ -114,9 +120,17 @@ float FB_FuzzyScaling_CalculateErrorWindow(FB_FuzzyScaling_t *fb, float sv, floa
     float absoluteError;
     float window;
 
-    if (fb == NULL) return FUZZY_SCALING_DEFAULT_ERROR_WINDOW;
+    if ((fb == NULL) || !FuzzyScaling_IsFinite(sv) || !FuzzyScaling_IsFinite(pv))
+    {
+        return FUZZY_SCALING_DEFAULT_ERROR_WINDOW;
+    }
 
     absoluteError = FuzzyScaling_Abs(sv - pv);
+    if (!FuzzyScaling_IsFinite(absoluteError))
+    {
+        return FUZZY_SCALING_DEFAULT_ERROR_WINDOW;
+    }
+
     window = fb->Config.BaseErrorWindow;
 
     if (fb->Config.AdaptiveEnable &&
@@ -141,7 +155,7 @@ float FB_FuzzyScaling_CalculateDynamicFactor(FB_FuzzyScaling_t *fb, float pvRate
     float normalizedRate;
     float factor;
 
-    if (fb == NULL) return 1.0f;
+    if ((fb == NULL) || !FuzzyScaling_IsFinite(pvRate)) return 1.0f;
 
     if (fb->Config.MaxPVRate > FUZZY_SCALING_EPSILON)
     {
@@ -152,6 +166,7 @@ float FB_FuzzyScaling_CalculateDynamicFactor(FB_FuzzyScaling_t *fb, float pvRate
         normalizedRate = 0.0f;
     }
 
+    if (!FuzzyScaling_IsFinite(normalizedRate)) normalizedRate = 1.0f;
     normalizedRate = FuzzyScaling_Clamp(normalizedRate, 0.0f, 1.0f);
 
     factor = 1.0f -
@@ -161,6 +176,8 @@ float FB_FuzzyScaling_CalculateDynamicFactor(FB_FuzzyScaling_t *fb, float pvRate
     {
         factor -= normalizedRate * FUZZY_SCALING_DYNAMIC_KU_GAIN;
     }
+
+    if (!FuzzyScaling_IsFinite(factor)) factor = FUZZY_SCALING_MIN_DYNAMIC_FACTOR;
 
     factor = FuzzyScaling_Clamp(
         factor,
@@ -177,7 +194,8 @@ float FB_FuzzyScaling_CalculateKe(FB_FuzzyScaling_t *fb)
 
     if (fb == NULL) return 0.05f;
 
-    if (fb->State.ErrorWindow > FUZZY_SCALING_EPSILON)
+    if (fb->State.ErrorWindow > FUZZY_SCALING_EPSILON &&
+        FuzzyScaling_IsFinite(fb->State.ErrorWindow))
     {
         ke = 1.0f / fb->State.ErrorWindow;
     }
@@ -191,6 +209,8 @@ float FB_FuzzyScaling_CalculateKe(FB_FuzzyScaling_t *fb)
         ke *= fb->State.DynamicFactor;
     }
 
+    if (!FuzzyScaling_IsFinite(ke)) ke = fb->Config.MinKe;
+
     ke = FuzzyScaling_Clamp(ke, fb->Config.MinKe, fb->Config.MaxKe);
     fb->State.TargetKe = ke;
     return ke;
@@ -202,7 +222,8 @@ float FB_FuzzyScaling_CalculateKde(FB_FuzzyScaling_t *fb)
 
     if (fb == NULL) return 0.10f;
 
-    if (fb->State.ErrorWindow > FUZZY_SCALING_EPSILON)
+    if (fb->State.ErrorWindow > FUZZY_SCALING_EPSILON &&
+        FuzzyScaling_IsFinite(fb->State.ErrorWindow))
     {
         kde = 1.0f /
               (fb->State.ErrorWindow * FUZZY_SCALING_KDE_RATIO);
@@ -216,6 +237,8 @@ float FB_FuzzyScaling_CalculateKde(FB_FuzzyScaling_t *fb)
     {
         kde *= fb->State.DynamicFactor;
     }
+
+    if (!FuzzyScaling_IsFinite(kde)) kde = fb->Config.MinKde;
 
     kde = FuzzyScaling_Clamp(kde, fb->Config.MinKde, fb->Config.MaxKde);
     fb->State.TargetKde = kde;
@@ -235,6 +258,8 @@ float FB_FuzzyScaling_CalculateKu(FB_FuzzyScaling_t *fb)
         ku *= fb->State.DynamicFactor;
     }
 
+    if (!FuzzyScaling_IsFinite(ku)) ku = fb->Config.MinKu;
+
     ku = FuzzyScaling_Clamp(ku, fb->Config.MinKu, fb->Config.MaxKu);
     fb->State.TargetKu = ku;
     return ku;
@@ -245,10 +270,20 @@ float FB_FuzzyScaling_Slew(float current, float target, float rate, float Ts)
     float delta;
     float maxDelta;
 
+    if (!FuzzyScaling_IsFinite(current) || !FuzzyScaling_IsFinite(target))
+    {
+        return FuzzyScaling_IsFinite(target) ? target : current;
+    }
+
     if (Ts <= 0.0f || rate <= 0.0f) return target;
 
     delta = target - current;
     maxDelta = rate * Ts;
+
+    if (!FuzzyScaling_IsFinite(delta) || !FuzzyScaling_IsFinite(maxDelta))
+    {
+        return current;
+    }
 
     if (delta > maxDelta) delta = maxDelta;
     else if (delta < -maxDelta) delta = -maxDelta;
@@ -258,12 +293,22 @@ float FB_FuzzyScaling_Slew(float current, float target, float rate, float Ts)
 
 float FB_FuzzyScaling_NormalizeError(float error, float ke)
 {
-    return FuzzyScaling_Clamp(error * ke, -1.0f, 1.0f);
+    float normalized;
+
+    if (!FuzzyScaling_IsFinite(error) || !FuzzyScaling_IsFinite(ke)) return 0.0f;
+    normalized = error * ke;
+    if (!FuzzyScaling_IsFinite(normalized)) return 0.0f;
+    return FuzzyScaling_Clamp(normalized, -1.0f, 1.0f);
 }
 
 float FB_FuzzyScaling_NormalizeDError(float dError, float kde)
 {
-    return FuzzyScaling_Clamp(dError * kde, -1.0f, 1.0f);
+    float normalized;
+
+    if (!FuzzyScaling_IsFinite(dError) || !FuzzyScaling_IsFinite(kde)) return 0.0f;
+    normalized = dError * kde;
+    if (!FuzzyScaling_IsFinite(normalized)) return 0.0f;
+    return FuzzyScaling_Clamp(normalized, -1.0f, 1.0f);
 }
 
 void FB_FuzzyScaling_Run(FB_FuzzyScaling_t *fb, float sv, float pv)
@@ -277,24 +322,55 @@ void FB_FuzzyScaling_Run(FB_FuzzyScaling_t *fb, float sv, float pv)
         FB_FuzzyScaling_Init(fb);
     }
 
+    /* Safety: never allow an invalid sensor/SV sample into the state. */
+    if (!FuzzyScaling_IsFinite(sv) || !FuzzyScaling_IsFinite(pv))
+    {
+        fb->State.Error = 0.0f;
+        fb->State.dError = 0.0f;
+        fb->State.PVRate = 0.0f;
+        fb->State.NormalizedError = 0.0f;
+        fb->State.NormalizedDError = 0.0f;
+        fb->State.DynamicFactor = 1.0f;
+        return;
+    }
+
+    if (!FuzzyScaling_IsFinite(fb->Config.Ts) ||
+        fb->Config.Ts <= FUZZY_SCALING_EPSILON)
+    {
+        fb->State.Error = sv - pv;
+        fb->State.dError = 0.0f;
+        fb->State.PVRate = 0.0f;
+        fb->State.NormalizedError = FB_FuzzyScaling_NormalizeError(
+            fb->State.Error, fb->State.Ke);
+        fb->State.NormalizedDError = 0.0f;
+        fb->State.PreviousError = fb->State.Error;
+        fb->State.PreviousPV = pv;
+        return;
+    }
+
     fb->State.PV = pv;
     fb->State.Error = sv - pv;
 
-    if (fb->Config.Ts > FUZZY_SCALING_EPSILON)
+    if (!FuzzyScaling_IsFinite(fb->State.Error))
     {
-        fb->State.dError =
-            (fb->State.Error - fb->State.PreviousError) /
-            fb->Config.Ts;
-
-        pvRate =
-            (pv - fb->State.PreviousPV) /
-            fb->Config.Ts;
-    }
-    else
-    {
+        fb->State.Error = 0.0f;
         fb->State.dError = 0.0f;
-        pvRate = 0.0f;
+        fb->State.PVRate = 0.0f;
+        fb->State.NormalizedError = 0.0f;
+        fb->State.NormalizedDError = 0.0f;
+        return;
     }
+
+    fb->State.dError =
+        (fb->State.Error - fb->State.PreviousError) /
+        fb->Config.Ts;
+
+    pvRate =
+        (pv - fb->State.PreviousPV) /
+        fb->Config.Ts;
+
+    if (!FuzzyScaling_IsFinite(fb->State.dError)) fb->State.dError = 0.0f;
+    if (!FuzzyScaling_IsFinite(pvRate)) pvRate = 0.0f;
 
     fb->State.PVRate = pvRate;
 
@@ -311,12 +387,6 @@ void FB_FuzzyScaling_Run(FB_FuzzyScaling_t *fb, float sv, float pv)
             fb->State.DynamicFactor = 1.0f;
         }
 
-        /*
-         * IMPORTANT FIX:
-         * The old implementation calculated TargetErrorWindow but never
-         * copied/slew-limited it into ErrorWindow. Ke/Kde therefore used the
-         * old 20 degC window almost permanently. Apply the target now.
-         */
         fb->State.ErrorWindow = FB_FuzzyScaling_Slew(
             fb->State.ErrorWindow,
             fb->State.TargetErrorWindow,
@@ -350,20 +420,15 @@ void FB_FuzzyScaling_Run(FB_FuzzyScaling_t *fb, float sv, float pv)
         fb->Config.KuSlewRate,
         fb->Config.Ts);
 
-    fb->State.Ke = FuzzyScaling_Clamp(
-        fb->State.Ke,
-        fb->Config.MinKe,
-        fb->Config.MaxKe);
-
-    fb->State.Kde = FuzzyScaling_Clamp(
-        fb->State.Kde,
-        fb->Config.MinKde,
-        fb->Config.MaxKde);
-
-    fb->State.Ku = FuzzyScaling_Clamp(
-        fb->State.Ku,
-        fb->Config.MinKu,
-        fb->Config.MaxKu);
+    fb->State.Ke = FuzzyScaling_Clamp(fb->State.Ke,
+                                      fb->Config.MinKe,
+                                      fb->Config.MaxKe);
+    fb->State.Kde = FuzzyScaling_Clamp(fb->State.Kde,
+                                       fb->Config.MinKde,
+                                       fb->Config.MaxKde);
+    fb->State.Ku = FuzzyScaling_Clamp(fb->State.Ku,
+                                      fb->Config.MinKu,
+                                      fb->Config.MaxKu);
 
     fb->State.NormalizedError = FB_FuzzyScaling_NormalizeError(
         fb->State.Error,
@@ -383,19 +448,32 @@ bool FB_FuzzyScaling_SetConfig(
 {
     if ((fb == NULL) || (config == NULL)) return false;
 
-    if (config->Ts <= 0.0f) return false;
-    if (config->MinTemperature >= config->MaxTemperature) return false;
-    if (config->BaseErrorWindow <= 0.0f) return false;
-    if (config->MinErrorWindow <= 0.0f) return false;
-    if (config->MaxErrorWindow < config->MinErrorWindow) return false;
+    if (!FuzzyScaling_IsFinite(config->Ts) || config->Ts <= 0.0f) return false;
+    if (!FuzzyScaling_IsFinite(config->MinTemperature) ||
+        !FuzzyScaling_IsFinite(config->MaxTemperature) ||
+        config->MinTemperature >= config->MaxTemperature) return false;
+    if (!FuzzyScaling_IsFinite(config->BaseErrorWindow) ||
+        config->BaseErrorWindow <= 0.0f) return false;
+    if (!FuzzyScaling_IsFinite(config->MinErrorWindow) ||
+        config->MinErrorWindow <= 0.0f) return false;
+    if (!FuzzyScaling_IsFinite(config->MaxErrorWindow) ||
+        config->MaxErrorWindow < config->MinErrorWindow) return false;
     if (config->BaseErrorWindow < config->MinErrorWindow ||
         config->BaseErrorWindow > config->MaxErrorWindow) return false;
-    if (config->MinKe <= 0.0f || config->MaxKe < config->MinKe) return false;
-    if (config->MinKde <= 0.0f || config->MaxKde < config->MinKde) return false;
-    if (config->MinKu <= 0.0f || config->MaxKu < config->MinKu) return false;
-    if (config->DynamicGain < 0.0f) return false;
-    if (config->MaxPVRate <= 0.0f) return false;
-    if (config->KuSlewRate <= 0.0f) return false;
+
+    if (!FuzzyScaling_IsFinite(config->MinKe) ||
+        !FuzzyScaling_IsFinite(config->MaxKe) ||
+        config->MinKe <= 0.0f || config->MaxKe < config->MinKe) return false;
+    if (!FuzzyScaling_IsFinite(config->MinKde) ||
+        !FuzzyScaling_IsFinite(config->MaxKde) ||
+        config->MinKde <= 0.0f || config->MaxKde < config->MinKde) return false;
+    if (!FuzzyScaling_IsFinite(config->MinKu) ||
+        !FuzzyScaling_IsFinite(config->MaxKu) ||
+        config->MinKu <= 0.0f || config->MaxKu < config->MinKu) return false;
+
+    if (!FuzzyScaling_IsFinite(config->DynamicGain) || config->DynamicGain < 0.0f) return false;
+    if (!FuzzyScaling_IsFinite(config->MaxPVRate) || config->MaxPVRate <= 0.0f) return false;
+    if (!FuzzyScaling_IsFinite(config->KuSlewRate) || config->KuSlewRate <= 0.0f) return false;
 
     fb->Config = *config;
 
@@ -410,14 +488,14 @@ bool FB_FuzzyScaling_SetConfig(
         fb->Config.MaxErrorWindow);
 
     fb->State.Ke = FuzzyScaling_Clamp(fb->State.Ke,
-                                       fb->Config.MinKe,
-                                       fb->Config.MaxKe);
+                                      fb->Config.MinKe,
+                                      fb->Config.MaxKe);
     fb->State.Kde = FuzzyScaling_Clamp(fb->State.Kde,
-                                        fb->Config.MinKde,
-                                        fb->Config.MaxKde);
+                                       fb->Config.MinKde,
+                                       fb->Config.MaxKde);
     fb->State.Ku = FuzzyScaling_Clamp(fb->State.Ku,
-                                       fb->Config.MinKu,
-                                       fb->Config.MaxKu);
+                                      fb->Config.MinKu,
+                                      fb->Config.MaxKu);
 
     return true;
 }
@@ -433,7 +511,7 @@ bool FB_FuzzyScaling_GetConfig(
 
 bool FB_FuzzyScaling_SetKe(FB_FuzzyScaling_t *fb, float ke)
 {
-    if (fb == NULL) return false;
+    if (fb == NULL || !FuzzyScaling_IsFinite(ke)) return false;
     if ((ke < fb->Config.MinKe) || (ke > fb->Config.MaxKe)) return false;
     fb->State.TargetKe = ke;
     return true;
@@ -441,7 +519,7 @@ bool FB_FuzzyScaling_SetKe(FB_FuzzyScaling_t *fb, float ke)
 
 bool FB_FuzzyScaling_SetKde(FB_FuzzyScaling_t *fb, float kde)
 {
-    if (fb == NULL) return false;
+    if (fb == NULL || !FuzzyScaling_IsFinite(kde)) return false;
     if ((kde < fb->Config.MinKde) || (kde > fb->Config.MaxKde)) return false;
     fb->State.TargetKde = kde;
     return true;
@@ -449,7 +527,7 @@ bool FB_FuzzyScaling_SetKde(FB_FuzzyScaling_t *fb, float kde)
 
 bool FB_FuzzyScaling_SetKu(FB_FuzzyScaling_t *fb, float ku)
 {
-    if (fb == NULL) return false;
+    if (fb == NULL || !FuzzyScaling_IsFinite(ku)) return false;
     if ((ku < fb->Config.MinKu) || (ku > fb->Config.MaxKu)) return false;
     fb->State.TargetKu = ku;
     return true;
@@ -457,7 +535,7 @@ bool FB_FuzzyScaling_SetKu(FB_FuzzyScaling_t *fb, float ku)
 
 bool FB_FuzzyScaling_SetErrorWindow(FB_FuzzyScaling_t *fb, float window)
 {
-    if (fb == NULL) return false;
+    if (fb == NULL || !FuzzyScaling_IsFinite(window)) return false;
     if ((window < fb->Config.MinErrorWindow) ||
         (window > fb->Config.MaxErrorWindow)) return false;
 
