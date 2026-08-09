@@ -7,6 +7,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include "ssm_std_define.h"
 #include "FB_FuzzyController.h"
 
 //------------------------------------------------------------------------------------//
@@ -59,12 +60,12 @@ typedef struct
     bool changed;
 } FB_FuzzyConfigManager_t;
 
-void FB_FuzzyConfig_Init(FB_FuzzyConfigManager_t *fb);
-void FB_FuzzyConfig_LoadDefault(FB_FuzzyConfigManager_t *fb);
-bool FB_FuzzyConfig_Check(FB_FuzzyConfigManager_t *fb);
-bool FB_FuzzyConfig_Apply(FB_FuzzyConfigManager_t *cfg, FB_FuzzyController_t *controller);
-bool FB_FuzzyConfig_SetRule(FB_FuzzyConfigManager_t *fb, uint8_t e, uint8_t de, uint8_t output);
-bool FB_FuzzyConfig_SetMF(FB_FuzzyConfigManager_t *fb, uint8_t index, FuzzyMFConfig_t *mf);
+MY_API void FB_FuzzyConfig_Init(FB_FuzzyConfigManager_t *fb);
+MY_API void FB_FuzzyConfig_LoadDefault(FB_FuzzyConfigManager_t *fb);
+MY_API bool FB_FuzzyConfig_Check(FB_FuzzyConfigManager_t *fb);
+MY_API bool FB_FuzzyConfig_Apply(FB_FuzzyConfigManager_t *cfg, FB_FuzzyController_t *controller);
+MY_API bool FB_FuzzyConfig_SetRule(FB_FuzzyConfigManager_t *fb, uint8_t e, uint8_t de, uint8_t output);
+MY_API bool FB_FuzzyConfig_SetMF(FB_FuzzyConfigManager_t *fb, uint8_t index, FuzzyMFConfig_t *mf);
 
 //------------------------------------------------------------------------------------//
 // C++ compatibility
