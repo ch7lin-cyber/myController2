@@ -2,10 +2,8 @@
 #include <cmath>
 #include <iostream>
 
-extern "C" {
 #include "FB_FuzzyController.h"
 #include "FB_FuzzyConfigManager.h"
-}
 
 int main()
 {
@@ -23,6 +21,6 @@ int main()
     assert(pwm >= controller.config.OutputMin);
     assert(pwm <= controller.config.OutputMax);
 
-    std::cout << "C++ linkage smoke test: PASS (PWM=" << pwm << ")\n";
+    std::cout << "C++ header/linkage smoke test: PASS (PWM=" << pwm << ")\n";
     return 0;
 }
