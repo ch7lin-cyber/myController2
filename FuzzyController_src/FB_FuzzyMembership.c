@@ -1,6 +1,6 @@
 /******************************************************************************
  * File    : FB_FuzzyMembership.c
- * Version : V2.2
+ * Version : V2.3
  * Brief   : 7x7 Fuzzy Membership Function Engine
  *
  * The default set is a continuous fuzzy partition over [-1,+1].
@@ -63,12 +63,13 @@ static void Fuzzy_LoadDefaultSet(FuzzyMembershipSet_t *set)
     if (set == NULL) return;
 
     /*
-     * Seven labels with evenly spaced centers:
+     * Seven labels with evenly spaced internal centers:
      *   NB  NM  NS  ZE  PS  PM  PB
      *   -2/3 -2/3 -1/3 0 +1/3 +2/3 +2/3
      *
-     * NB/PB are shoulders; the adjacent triangles overlap their shoulders.
-     * This removes the zero-degree holes present in the previous definition.
+     * NB/PB are shoulders. The adjacent NM/PM triangles intentionally share
+     * the shoulder transition center, producing a continuous partition with
+     * no zero-degree holes at the outer regions.
      */
     set->MF[FUZZY_NB].Type   = FUZZY_MF_LEFT_SHOULDER;
     set->MF[FUZZY_NB].Left   = -1.00f;
@@ -266,23 +267,46 @@ bool FB_FuzzyMembership_GetConfig(const FB_FuzzyMembership_t *fb, FuzzyMembershi
 bool FB_FuzzyMembership_Validate(const FuzzyMembershipSet_t *set)
 {
     uint8_t i;
+
     if (set == NULL) return false;
     if (set->MF[FUZZY_NB].Type != FUZZY_MF_LEFT_SHOULDER) return false;
     if (set->MF[FUZZY_PB].Type != FUZZY_MF_RIGHT_SHOULDER) return false;
-    if (set->MF[FUZZY_NB].Left != FUZZY_INPUT_MIN) return false;
-    if (set->MF[FUZZY_PB].Right != FUZZY_INPUT_MAX) return false;
+    if (Fuzzy_Abs(set->MF[FUZZY_NB].Left - FUZZY_INPUT_MIN) > FUZZY_EPSILON) return false;
+    if (Fuzzy_Abs(set->MF[FUZZY_PB].Right - FUZZY_INPUT_MAX) > FUZZY_EPSILON) return false;
+
     for (i = 0U; i < FUZZY_MF_COUNT; ++i)
+    {
         if (!Fuzzy_ValidateFunction(&set->MF[i])) return false;
+    }
 
     for (i = 0U; i + 1U < FUZZY_MF_COUNT; ++i)
     {
         const FuzzyMembershipFunction_t *a = &set->MF[i];
         const FuzzyMembershipFunction_t *b = &set->MF[i + 1U];
-        float aEnd = (a->Type == FUZZY_MF_LEFT_SHOULDER) ? a->Center : a->Right;
-        float bStart = (b->Type == FUZZY_MF_RIGHT_SHOULDER) ? b->Center : b->Left;
-        if (!(a->Center < b->Center)) return false;
+        const float aEnd = (a->Type == FUZZY_MF_LEFT_SHOULDER) ? a->Center : a->Right;
+        const float bStart = (b->Type == FUZZY_MF_RIGHT_SHOULDER) ? b->Center : b->Left;
+        const bool sharedOuterCenter =
+            ((i == FUZZY_NB) && ((i + 1U) == FUZZY_NM)) ||
+            ((i == FUZZY_PM) && ((i + 1U) == FUZZY_PB));
+
+        /*
+         * The outer shoulder and its adjacent triangle intentionally share
+         * the same transition center. All other neighboring centers must be
+         * strictly ordered.
+         */
+        if (sharedOuterCenter)
+        {
+            if (Fuzzy_Abs(a->Center - b->Center) > FUZZY_EPSILON) return false;
+        }
+        else
+        {
+            if ((b->Center - a->Center) <= FUZZY_EPSILON) return false;
+        }
+
+        /* Adjacent membership functions must overlap; gaps are not allowed. */
         if ((aEnd - bStart) <= FUZZY_EPSILON) return false;
     }
+
     return true;
 }
 
