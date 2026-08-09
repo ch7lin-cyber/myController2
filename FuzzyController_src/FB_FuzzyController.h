@@ -14,16 +14,20 @@
 #ifndef FB_FUZZY_CONTROLLER_H
 #define FB_FUZZY_CONTROLLER_H
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 #include <stdint.h>
 #include <stdbool.h>
+#include "ssm_std_define.h"
 #include "FB_FuzzyScaling.h"
 #include "FB_FuzzyMembership.h"
 #include "FB_FuzzyRule.h"
 #include "FB_FuzzyOutputManager.h"
+
+//------------------------------------------------------------------------------------//
+// C++ compatibility // DO NOT DELETE
+#ifdef __cplusplus
+extern "C" {
+#endif
+//------------------------------------------------------------------------------------//
 
 #define FUZZY_CONTROLLER_TS      (0.020f)
 #define FUZZY_INPUT_COUNT        (7U)
@@ -58,24 +62,27 @@ typedef struct
     FB_FuzzyOutputManager_t output;
 } FB_FuzzyController_t;
 
-void FB_FuzzyController_Init(FB_FuzzyController_t *fb);
+MY_API void FB_FuzzyController_Init(FB_FuzzyController_t *fb);
 
 /* Execute at the configured controller period, default 20 ms. */
 /* Return value is an absolute PWM command, default 0..1000. */
-float FB_FuzzyController_Run(FB_FuzzyController_t *fb, float SV, float PV);
+MY_API float FB_FuzzyController_Run(FB_FuzzyController_t *fb, float SV, float PV);
 
-void FB_FuzzyController_Reset(FB_FuzzyController_t *fb);
-void FB_FuzzyController_LoadDefaultRule(FB_FuzzyController_t *fb);
+MY_API void FB_FuzzyController_Reset(FB_FuzzyController_t *fb);
+MY_API void FB_FuzzyController_LoadDefaultRule(FB_FuzzyController_t *fb);
 
-bool FB_FuzzyController_SetRule(
+MY_API bool FB_FuzzyController_SetRule(
     FB_FuzzyController_t *fb,
     uint8_t errorIndex,
     uint8_t dErrorIndex,
     int16_t outputPWM
 );
 
+//------------------------------------------------------------------------------------//
+// C++ compatibility
 #ifdef __cplusplus
 }
 #endif
+//------------------------------------------------------------------------------------//
 
 #endif /* FB_FUZZY_CONTROLLER_H */
