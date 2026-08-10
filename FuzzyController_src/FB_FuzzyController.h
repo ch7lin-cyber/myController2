@@ -1,6 +1,6 @@
 /******************************************************************************
  * File    : FB_FuzzyController.h
- * Version : V2.2
+ * Version : V2.3
  * Brief   : IEC61131-3 Style Fuzzy Temperature Controller
  *
  * Execution chain:
@@ -29,12 +29,23 @@ extern "C" {
 #endif
 //------------------------------------------------------------------------------------//
 
-#define FUZZY_CONTROLLER_TS      (0.020f)
-#define FUZZY_INPUT_COUNT        (7U)
+#define FUZZY_CONTROLLER_SAMPLE_TIME_DEFAULT_MS   (20U)
+#define FUZZY_CONTROLLER_SAMPLE_TIME_MIN_MS       (1U)
+#define FUZZY_CONTROLLER_SAMPLE_TIME_MAX_MS       (6000U)
+#define FUZZY_INPUT_COUNT                          (7U)
 
 typedef struct
 {
+    /*
+     * Public execution-period configuration.
+     * Set once before cyclic operation through FB_FuzzyController_SetSampleTime().
+     * Valid range: 1..6000 ms.
+     */
+    uint32_t SampleTime_ms;
+
+    /* Cached seconds representation used internally by time-based algorithms. */
     float Ts;
+
     bool Enable;
     float OutputMin;
     float OutputMax;
@@ -63,6 +74,17 @@ typedef struct
 } FB_FuzzyController_t;
 
 MY_API void FB_FuzzyController_Init(FB_FuzzyController_t *fb);
+
+/*
+ * Configure the fixed cyclic execution period.
+ * Call during initialization/configuration, before normal cyclic Run().
+ */
+MY_API bool FB_FuzzyController_SetSampleTime(
+    FB_FuzzyController_t *fb,
+    uint32_t sampleTime_ms);
+
+MY_API uint32_t FB_FuzzyController_GetSampleTime(
+    const FB_FuzzyController_t *fb);
 
 /* Execute at the configured controller period, default 20 ms. */
 /* Return value is an absolute PWM command, default 0..1000. */
