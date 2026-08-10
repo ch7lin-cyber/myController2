@@ -25,6 +25,12 @@ int main()
     FB_FuzzyConfig_Init(&config);
 
     assert(FB_FuzzyConfig_Check(&config));
+    assert(FB_FuzzyController_GetSampleTime(&controller) == 20U);
+
+    assert(FB_FuzzyController_SetSampleTime(&controller, 5U));
+    assert(FB_FuzzyController_GetSampleTime(&controller) == 5U);
+    assert(std::fabs(controller.config.Ts - 0.005f) < 0.000001f);
+    assert(std::fabs(controller.scaling.Config.Ts - 0.005f) < 0.000001f);
 
     const float pwm = FB_FuzzyController_Run(&controller, 130.0f, 25.0f);
 
@@ -32,6 +38,7 @@ int main()
     assert(pwm >= controller.config.OutputMin);
     assert(pwm <= controller.config.OutputMax);
 
-    std::cout << "C++ all-header/linkage smoke test: PASS (PWM=" << pwm << ")\n";
+    std::cout << "C++ all-header/linkage + sample-time smoke test: PASS (PWM="
+              << pwm << ")\n";
     return 0;
 }
