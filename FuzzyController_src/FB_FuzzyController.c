@@ -6,6 +6,7 @@
 #define FUZZY_CONTROLLER_FLOAT_MAX  (3.402823466e+38F)
 #define FUZZY_CONTROLLER_PWM_MIN    (0.0f)
 #define FUZZY_CONTROLLER_PWM_MAX    (1000.0f)
+#define FUZZY_MS_TO_SEC             (0.001f)
 
 static float FuzzyController_Clamp(float value, float minValue, float maxValue)
 {
@@ -19,6 +20,17 @@ static bool FuzzyController_IsFinite(float value)
     return (value == value) &&
            (value < FUZZY_CONTROLLER_FLOAT_MAX) &&
            (value > -FUZZY_CONTROLLER_FLOAT_MAX);
+}
+
+static bool FuzzyController_IsSampleTimeValid(uint32_t sampleTime_ms)
+{
+    return (sampleTime_ms >= FUZZY_CONTROLLER_SAMPLE_TIME_MIN_MS) &&
+           (sampleTime_ms <= FUZZY_CONTROLLER_SAMPLE_TIME_MAX_MS);
+}
+
+static float FuzzyController_SampleTimeToSeconds(uint32_t sampleTime_ms)
+{
+    return (float)sampleTime_ms * FUZZY_MS_TO_SEC;
 }
 
 static float FuzzyController_GetSafeOutputMin(const FB_FuzzyController_t *fb)
@@ -37,6 +49,9 @@ static float FuzzyController_GetSafeOutputMin(const FB_FuzzyController_t *fb)
 static bool FuzzyController_IsConfigValid(const FB_FuzzyController_t *fb)
 {
     if (fb == NULL) return false;
+
+    if (!FuzzyController_IsSampleTimeValid(fb->config.SampleTime_ms))
+        return false;
 
     if (!FuzzyController_IsFinite(fb->config.Ts) ||
         (fb->config.Ts <= FUZZY_CONTROLLER_EPSILON))
@@ -70,7 +85,9 @@ void FB_FuzzyController_Init(FB_FuzzyController_t *fb)
 {
     if (fb == NULL) return;
 
-    fb->config.Ts = FUZZY_CONTROLLER_TS;
+    fb->config.SampleTime_ms = FUZZY_CONTROLLER_SAMPLE_TIME_DEFAULT_MS;
+    fb->config.Ts = FuzzyController_SampleTimeToSeconds(
+        fb->config.SampleTime_ms);
     fb->config.Enable = true;
     fb->config.OutputMin = FUZZY_CONTROLLER_PWM_MIN;
     fb->config.OutputMax = FUZZY_CONTROLLER_PWM_MAX;
@@ -96,6 +113,42 @@ void FB_FuzzyController_Init(FB_FuzzyController_t *fb)
 
     FB_FuzzyController_LoadDefaultRule(fb);
     fb->state.initialized = true;
+}
+
+bool FB_FuzzyController_SetSampleTime(
+    FB_FuzzyController_t *fb,
+    uint32_t sampleTime_ms)
+{
+    float Ts;
+
+    if (fb == NULL) return false;
+    if (!FuzzyController_IsSampleTimeValid(sampleTime_ms)) return false;
+
+    Ts = FuzzyController_SampleTimeToSeconds(sampleTime_ms);
+    if (!FuzzyController_IsFinite(Ts) || (Ts <= FUZZY_CONTROLLER_EPSILON))
+        return false;
+
+    fb->config.SampleTime_ms = sampleTime_ms;
+    fb->config.Ts = Ts;
+    fb->scaling.Config.Ts = Ts;
+
+    /*
+     * This API is intended for configuration before cyclic execution. If it is
+     * used again while stopped, restart derivative references cleanly without
+     * changing the configured output limits or rule/membership data.
+     */
+    fb->state.firstRun = true;
+    fb->state.dError = 0.0f;
+    fb->scaling.State.dError = 0.0f;
+    fb->scaling.State.PVRate = 0.0f;
+
+    return true;
+}
+
+uint32_t FB_FuzzyController_GetSampleTime(const FB_FuzzyController_t *fb)
+{
+    if (fb == NULL) return 0U;
+    return fb->config.SampleTime_ms;
 }
 
 float FB_FuzzyController_Run(FB_FuzzyController_t *fb, float SV, float PV)
@@ -138,6 +191,8 @@ float FB_FuzzyController_Run(FB_FuzzyController_t *fb, float SV, float PV)
     }
 
     /* Synchronize dependent blocks with the public controller configuration. */
+    fb->config.Ts = FuzzyController_SampleTimeToSeconds(
+        fb->config.SampleTime_ms);
     fb->scaling.Config.Ts = fb->config.Ts;
     fb->output.config.pwmMin = fb->config.OutputMin;
     fb->output.config.pwmMax = fb->config.OutputMax;
@@ -212,6 +267,11 @@ void FB_FuzzyController_Reset(FB_FuzzyController_t *fb)
     fb->state.dError = 0.0f;
     fb->state.Centroid = 0.0f;
     fb->state.firstRun = true;
+
+    /* Keep the externally configured execution period across Reset(). */
+    fb->config.Ts = FuzzyController_SampleTimeToSeconds(
+        fb->config.SampleTime_ms);
+    fb->scaling.Config.Ts = fb->config.Ts;
 }
 
 void FB_FuzzyController_LoadDefaultRule(FB_FuzzyController_t *fb)
