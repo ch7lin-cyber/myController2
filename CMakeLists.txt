@@ -10,6 +10,7 @@ include(CTest)
 option(MYCONTROLLER_BUILD_SHARED "Build Fuzzy controller as a shared library" OFF)
 option(MYCONTROLLER_BUILD_TESTS "Build C/C++ regression tests" ON)
 option(MYCONTROLLER_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" OFF)
+option(MYCONTROLLER_BUILD_PC_CONTROL "Build ctypes bridge for Python PC control" ON)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -73,6 +74,38 @@ else()
     )
     if(MYCONTROLLER_WARNINGS_AS_ERRORS)
         target_compile_options(fuzzy_controller PRIVATE -Werror)
+    endif()
+endif()
+
+# Small shared-library bridge for Python ctypes.  It compiles the controller
+# sources directly so Python only needs one DLL/.so/.dylib at runtime.
+if(MYCONTROLLER_BUILD_PC_CONTROL)
+    add_library(fuzzy_pc_bridge SHARED
+        tools/pc_control/FuzzyPcBridge.c
+        ${FUZZY_CONTROLLER_SOURCES}
+    )
+
+    target_include_directories(fuzzy_pc_bridge
+        PUBLIC
+            ${CMAKE_CURRENT_SOURCE_DIR}
+            ${CMAKE_CURRENT_SOURCE_DIR}/FuzzyController_src
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/pc_control
+    )
+
+    if(WIN32)
+        target_compile_definitions(fuzzy_pc_bridge PRIVATE SSM_FB_BUILD_DLL)
+    elseif(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_definitions(fuzzy_pc_bridge PRIVATE SSM_FB_BUILD_SHARED)
+        set_target_properties(fuzzy_pc_bridge PROPERTIES
+            C_VISIBILITY_PRESET hidden
+            VISIBILITY_INLINES_HIDDEN YES
+        )
+    endif()
+
+    if(MSVC)
+        target_compile_options(fuzzy_pc_bridge PRIVATE /W4)
+    else()
+        target_compile_options(fuzzy_pc_bridge PRIVATE -Wall -Wextra -Wpedantic)
     endif()
 endif()
 
