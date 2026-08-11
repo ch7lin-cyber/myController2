@@ -3,6 +3,7 @@ name: Cross-Platform C C++ Regression
 on:
   push:
     branches:
+      - main
       - branch2
   pull_request:
     branches:
@@ -41,6 +42,7 @@ jobs:
           cmake -S . -B build \
             -DMYCONTROLLER_BUILD_SHARED=${SHARED} \
             -DMYCONTROLLER_BUILD_TESTS=ON \
+            -DMYCONTROLLER_BUILD_PC_CONTROL=ON \
             -DMYCONTROLLER_WARNINGS_AS_ERRORS=OFF
 
       - name: Build
@@ -48,3 +50,6 @@ jobs:
 
       - name: Test
         run: ctest --test-dir build -C Debug --output-on-failure
+
+      - name: Python syntax check
+        run: python -m py_compile tools/pc_control/fuzzy_modbus_control.py
