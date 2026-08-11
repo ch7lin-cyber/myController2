@@ -28,7 +28,15 @@ target_link_libraries(test_identified_plant PRIVATE
 )
 add_test(NAME identified_plant_smoke COMMAND test_identified_plant)
 
-# When testing a Windows shared-library build, ensure the fuzzy DLL directory is
+if(MYCONTROLLER_BUILD_PC_CONTROL)
+    add_executable(test_fuzzy_pc_bridge
+        test_fuzzy_pc_bridge.c
+    )
+    target_link_libraries(test_fuzzy_pc_bridge PRIVATE fuzzy_pc_bridge)
+    add_test(NAME fuzzy_pc_bridge_api COMMAND test_fuzzy_pc_bridge)
+endif()
+
+# When testing a Windows shared-library build, ensure DLL directories are
 # visible to CTest at runtime. Static builds are unaffected.
 if(WIN32 AND MYCONTROLLER_BUILD_SHARED)
     set(_fuzzy_dll_path "$<TARGET_FILE_DIR:fuzzy_controller>")
@@ -38,5 +46,13 @@ if(WIN32 AND MYCONTROLLER_BUILD_SHARED)
         fuzzy_config_manager
         identified_plant_smoke
         PROPERTIES ENVIRONMENT "PATH=${_fuzzy_dll_path};$ENV{PATH}"
+    )
+endif()
+
+if(WIN32 AND MYCONTROLLER_BUILD_PC_CONTROL)
+    set(_pc_bridge_dll_path "$<TARGET_FILE_DIR:fuzzy_pc_bridge>")
+    set_tests_properties(
+        fuzzy_pc_bridge_api
+        PROPERTIES ENVIRONMENT "PATH=${_pc_bridge_dll_path};$ENV{PATH}"
     )
 endif()
