@@ -153,11 +153,42 @@ static void FuzzyController_ForceOutputMin(FB_FuzzyController_t *fb)
     const float safeMin = FuzzyController_GetSafeOutputMin(fb);
 
     fb->state.PWM = safeMin;
+
     fb->output.state.pwmFF = 0.0f;
     fb->output.state.fuzzyCorrection = 0.0f;
     fb->output.state.targetPWM = safeMin;
     fb->output.state.outputPWM = safeMin;
     fb->output.state.previousPWM = safeMin;
+
+    fb->hybridOutput.state.feedForwardPWM = 0.0f;
+    fb->hybridOutput.state.fuzzyCorrectionPWM = 0.0f;
+    fb->hybridOutput.state.biasPWM = 0.0f;
+    fb->hybridOutput.state.targetPWM = safeMin;
+    fb->hybridOutput.state.outputPWM = safeMin;
+}
+
+void FB_FuzzyController_LoadIdentifiedFeedForward(FB_FuzzyController_t *fb)
+{
+    if (fb == NULL) return;
+
+    /*
+     * Derived directly from ControllPlant identification data at 25 degC:
+     *   0%  -> 25.00 C
+     *   20% -> 93.40 C
+     *   50% -> 149.15 C
+     *   80% -> 160.84 C
+     * Controller PWM uses 0..1000 = 0..100%.
+     */
+    fb->hybridOutput.config.ffSize = 4U;
+    fb->hybridOutput.config.ffTable[0].temperature = 25.00f;
+    fb->hybridOutput.config.ffTable[0].pwm = 0.0f;
+    fb->hybridOutput.config.ffTable[1].temperature = 93.40f;
+    fb->hybridOutput.config.ffTable[1].pwm = 200.0f;
+    fb->hybridOutput.config.ffTable[2].temperature = 149.15f;
+    fb->hybridOutput.config.ffTable[2].pwm = 500.0f;
+    fb->hybridOutput.config.ffTable[3].temperature = 160.84f;
+    fb->hybridOutput.config.ffTable[3].pwm = 800.0f;
+    fb->hybridOutput.config.enableFeedForward = true;
 }
 
 void FB_FuzzyController_Init(FB_FuzzyController_t *fb)
@@ -169,6 +200,7 @@ void FB_FuzzyController_Init(FB_FuzzyController_t *fb)
         fb->config.SampleTime_ms);
     fb->config.DErrorFilterTau_s = FUZZY_CONTROLLER_DERROR_FILTER_TAU_DEFAULT_S;
     fb->config.DErrorDeadband_c_per_s = FUZZY_CONTROLLER_DERROR_DEADBAND_DEFAULT;
+    fb->config.UseHybridOutput = false;
     fb->config.Enable = true;
     fb->config.OutputMin = FUZZY_CONTROLLER_PWM_MIN;
     fb->config.OutputMax = FUZZY_CONTROLLER_PWM_MAX;
@@ -188,11 +220,14 @@ void FB_FuzzyController_Init(FB_FuzzyController_t *fb)
     FB_FuzzyMembership_Init(&fb->membership);
     FB_FuzzyRule_Init(&fb->ruleEngine);
     FB_FuzzyOutput_Init(&fb->output);
+    FB_FuzzyHybridOutput_Init(&fb->hybridOutput);
+    FB_FuzzyController_LoadIdentifiedFeedForward(fb);
 
-    /* Keep all time/output limits on the same controller configuration. */
     fb->scaling.Config.Ts = fb->config.Ts;
     fb->output.config.pwmMin = fb->config.OutputMin;
     fb->output.config.pwmMax = fb->config.OutputMax;
+    fb->hybridOutput.config.pwmMin = fb->config.OutputMin;
+    fb->hybridOutput.config.pwmMax = fb->config.OutputMax;
 
     FB_FuzzyController_LoadDefaultRule(fb);
     fb->state.initialized = true;
@@ -215,7 +250,6 @@ bool FB_FuzzyController_SetSampleTime(
     fb->config.Ts = Ts;
     fb->scaling.Config.Ts = Ts;
 
-    /* Configuration-stage change: restart derivative references cleanly. */
     fb->state.firstRun = true;
     FuzzyController_ClearDerivativeState(fb);
 
@@ -252,6 +286,28 @@ bool FB_FuzzyController_SetDerivativeFilter(
     return true;
 }
 
+void FB_FuzzyController_EnableHybridOutput(
+    FB_FuzzyController_t *fb,
+    bool enable)
+{
+    float current;
+
+    if (fb == NULL) return;
+
+    current = FuzzyController_Clamp(
+        fb->state.PWM,
+        fb->config.OutputMin,
+        fb->config.OutputMax);
+
+    fb->config.UseHybridOutput = enable;
+
+    /* Bumpless handoff: seed both output blocks from the current MV. */
+    fb->output.state.outputPWM = current;
+    fb->output.state.previousPWM = current;
+    fb->hybridOutput.state.outputPWM = current;
+    fb->hybridOutput.state.targetPWM = current;
+}
+
 float FB_FuzzyController_Run(FB_FuzzyController_t *fb, float SV, float PV)
 {
     float rulePWM;
@@ -262,7 +318,6 @@ float FB_FuzzyController_Run(FB_FuzzyController_t *fb, float SV, float PV)
     if (!fb->state.initialized)
         FB_FuzzyController_Init(fb);
 
-    /* Fail-safe: invalid controller configuration must never drive the heater. */
     if (!FuzzyController_IsConfigValid(fb))
     {
         FuzzyController_ForceOutputMin(fb);
@@ -272,7 +327,6 @@ float FB_FuzzyController_Run(FB_FuzzyController_t *fb, float SV, float PV)
         return fb->state.PWM;
     }
 
-    /* Fail-safe: invalid process data must never produce heater output. */
     if (!FuzzyController_IsFinite(SV) || !FuzzyController_IsFinite(PV))
     {
         fb->state.SV = SV;
@@ -286,25 +340,24 @@ float FB_FuzzyController_Run(FB_FuzzyController_t *fb, float SV, float PV)
 
     if (!fb->config.Enable)
     {
-        /* A disabled heater controller must not retain a stale output state. */
         FuzzyController_ForceOutputMin(fb);
         FuzzyController_ClearDerivativeState(fb);
         fb->state.firstRun = true;
         return fb->state.PWM;
     }
 
-    /* Synchronize dependent blocks with the public controller configuration. */
     fb->config.Ts = FuzzyController_SampleTimeToSeconds(
         fb->config.SampleTime_ms);
     fb->scaling.Config.Ts = fb->config.Ts;
     fb->output.config.pwmMin = fb->config.OutputMin;
     fb->output.config.pwmMax = fb->config.OutputMax;
+    fb->hybridOutput.config.pwmMin = fb->config.OutputMin;
+    fb->hybridOutput.config.pwmMax = fb->config.OutputMax;
 
     fb->state.SV = SV;
     fb->state.PV = PV;
     fb->state.Error = SV - PV;
 
-    /* Avoid an artificial derivative spike on the first cycle. */
     if (fb->state.firstRun)
     {
         fb->scaling.State.PreviousError = fb->state.Error;
@@ -318,13 +371,6 @@ float FB_FuzzyController_Run(FB_FuzzyController_t *fb, float SV, float PV)
     FB_FuzzyScaling_Run(&fb->scaling, SV, PV);
 
     fb->state.Error = fb->scaling.State.Error;
-
-    /*
-     * Scaling computes the mathematically raw derivative.  Preserve it for
-     * diagnostics, then condition it before fuzzy inference.  This prevents a
-     * 0.1 degC sensor LSB at 20 ms from appearing as an immediate +/-5 degC/s
-     * full-scale fuzzy event.
-     */
     rawDError = fb->scaling.State.dError;
     fb->state.RawDError = rawDError;
     fb->state.dError = FuzzyController_FilterDError(fb, rawDError);
@@ -342,21 +388,30 @@ float FB_FuzzyController_Run(FB_FuzzyController_t *fb, float SV, float PV)
 
     FB_FuzzyRule_Run(&fb->ruleEngine, &fb->membership);
 
-    /* Rule output is an absolute PWM singleton, 0..1000. */
     rulePWM = FuzzyController_Clamp(
         fb->ruleEngine.Result.RuleOutput,
         fb->config.OutputMin,
         fb->config.OutputMax
     );
 
-    /* Output Manager handles FF policy, slew limiting and final clamp. */
-    fb->state.PWM = FB_FuzzyOutput_RunAbsolute(
-        &fb->output,
-        SV,
-        rulePWM,
-        fb->config.Ts);
+    if (fb->config.UseHybridOutput)
+    {
+        fb->state.PWM = FB_FuzzyHybridOutput_Run(
+            &fb->hybridOutput,
+            SV,
+            PV,
+            rulePWM,
+            fb->config.Ts);
+    }
+    else
+    {
+        fb->state.PWM = FB_FuzzyOutput_RunAbsolute(
+            &fb->output,
+            SV,
+            rulePWM,
+            fb->config.Ts);
+    }
 
-    /* Diagnostic normalized equivalent only; it is not used for control. */
     if (fb->config.OutputMax > fb->config.OutputMin + FUZZY_CONTROLLER_EPSILON)
     {
         fb->state.Centroid =
@@ -378,6 +433,7 @@ void FB_FuzzyController_Reset(FB_FuzzyController_t *fb)
     FB_FuzzyScaling_Reset(&fb->scaling);
     FB_FuzzyMembership_Reset(&fb->membership);
     FB_FuzzyRule_Reset(&fb->ruleEngine);
+    FB_FuzzyHybridOutput_Reset(&fb->hybridOutput);
 
     FuzzyController_ForceOutputMin(fb);
 
@@ -390,7 +446,6 @@ void FB_FuzzyController_Reset(FB_FuzzyController_t *fb)
     fb->state.Centroid = 0.0f;
     fb->state.firstRun = true;
 
-    /* Keep the externally configured execution period across Reset(). */
     fb->config.Ts = FuzzyController_SampleTimeToSeconds(
         fb->config.SampleTime_ms);
     fb->scaling.Config.Ts = fb->config.Ts;
