@@ -77,10 +77,16 @@ class FuzzyLibrary:
 
         for name in (
             "FuzzyPc_GetError",
+            "FuzzyPc_GetRawDError",
+            "FuzzyPc_GetFilteredDError",
             "FuzzyPc_GetDError",
             "FuzzyPc_GetNormalizedError",
             "FuzzyPc_GetNormalizedDError",
             "FuzzyPc_GetRulePWM",
+            "FuzzyPc_GetFeedForwardPWM",
+            "FuzzyPc_GetFuzzyCorrectionPWM",
+            "FuzzyPc_GetBiasPWM",
+            "FuzzyPc_GetTargetPWM",
             "FuzzyPc_GetPWM",
             "FuzzyPc_GetCentroid",
         ):
@@ -103,10 +109,16 @@ class FuzzyLibrary:
     def diagnostics(self) -> dict[str, float]:
         return {
             "error_c": float(self.lib.FuzzyPc_GetError()),
+            "raw_derror_c_per_s": float(self.lib.FuzzyPc_GetRawDError()),
+            "filtered_derror_c_per_s": float(self.lib.FuzzyPc_GetFilteredDError()),
             "derror_c_per_s": float(self.lib.FuzzyPc_GetDError()),
             "normalized_error": float(self.lib.FuzzyPc_GetNormalizedError()),
             "normalized_derror": float(self.lib.FuzzyPc_GetNormalizedDError()),
             "rule_pwm": float(self.lib.FuzzyPc_GetRulePWM()),
+            "ff_pwm": float(self.lib.FuzzyPc_GetFeedForwardPWM()),
+            "fuzzy_correction_pwm": float(self.lib.FuzzyPc_GetFuzzyCorrectionPWM()),
+            "bias_pwm": float(self.lib.FuzzyPc_GetBiasPWM()),
+            "target_pwm": float(self.lib.FuzzyPc_GetTargetPWM()),
             "pwm": float(self.lib.FuzzyPc_GetPWM()),
             "centroid": float(self.lib.FuzzyPc_GetCentroid()),
         }
@@ -129,7 +141,6 @@ class ModbusIO:
                 address=address, count=1, device_id=self.device_id
             )
         except TypeError:
-            # PyModbus <= 3.9 compatibility.
             response = self.client.read_holding_registers(
                 address=address, count=1, slave=self.device_id
             )
@@ -163,6 +174,7 @@ def uint16_to_int16(value: int) -> int:
 def find_default_library(repo_root: Path) -> Optional[Path]:
     names = (
         "fuzzy_pc_bridge.dll",
+        "libfuzzy_pc_bridge.dll",
         "libfuzzy_pc_bridge.so",
         "libfuzzy_pc_bridge.dylib",
     )
@@ -355,10 +367,16 @@ def main() -> int:
         "pv_raw",
         "pv_c",
         "error_c",
+        "raw_derror_c_per_s",
+        "filtered_derror_c_per_s",
         "derror_c_per_s",
         "normalized_error",
         "normalized_derror",
         "rule_pwm",
+        "ff_pwm",
+        "fuzzy_correction_pwm",
+        "bias_pwm",
+        "target_pwm",
         "final_pwm",
         "mv_write_raw",
         "centroid",
@@ -385,6 +403,7 @@ def main() -> int:
     print(f"Fuzzy library: {library_path}")
     print(f"CSV: {csv_path}")
     print("Initial state: STOP (MV=0)")
+    print("Branch3 mode: identified FF + fuzzy correction + bias trim")
     print("Commands: run | stop | sv <C> | status | reset | quit")
 
     try:
@@ -408,10 +427,16 @@ def main() -> int:
                 status = "OK"
                 diag = {
                     "error_c": 0.0,
+                    "raw_derror_c_per_s": 0.0,
+                    "filtered_derror_c_per_s": 0.0,
                     "derror_c_per_s": 0.0,
                     "normalized_error": 0.0,
                     "normalized_derror": 0.0,
                     "rule_pwm": 0.0,
+                    "ff_pwm": 0.0,
+                    "fuzzy_correction_pwm": 0.0,
+                    "bias_pwm": 0.0,
+                    "target_pwm": 0.0,
                     "pwm": 0.0,
                     "centroid": 0.0,
                 }
@@ -448,7 +473,7 @@ def main() -> int:
                         state.last_mv = 0
                         mv_raw = 0
 
-                except Exception as exc:  # Safety: any runtime fault stops heater output.
+                except Exception as exc:
                     status = f"ERROR:{type(exc).__name__}:{exc}"
                     state.comm_errors += 1
                     state.run = False
@@ -468,8 +493,6 @@ def main() -> int:
                 remaining_s = next_deadline - end_work_t
                 overrun_ms = max(0.0, -remaining_s * 1000.0)
 
-                # CSV logging is deliberately decimated from the control loop.
-                # Example: 20 ms control + 100 ms log => 50 Hz control, 10 Hz CSV.
                 if cycle_t >= next_log_t:
                     writer.writerow(
                         {
@@ -481,10 +504,16 @@ def main() -> int:
                             "pv_raw": pv_raw,
                             "pv_c": "" if not math.isfinite(pv_c) else f"{pv_c:.6f}",
                             "error_c": f"{diag['error_c']:.6f}",
+                            "raw_derror_c_per_s": f"{diag['raw_derror_c_per_s']:.6f}",
+                            "filtered_derror_c_per_s": f"{diag['filtered_derror_c_per_s']:.6f}",
                             "derror_c_per_s": f"{diag['derror_c_per_s']:.6f}",
                             "normalized_error": f"{diag['normalized_error']:.6f}",
                             "normalized_derror": f"{diag['normalized_derror']:.6f}",
                             "rule_pwm": f"{diag['rule_pwm']:.6f}",
+                            "ff_pwm": f"{diag['ff_pwm']:.6f}",
+                            "fuzzy_correction_pwm": f"{diag['fuzzy_correction_pwm']:.6f}",
+                            "bias_pwm": f"{diag['bias_pwm']:.6f}",
+                            "target_pwm": f"{diag['target_pwm']:.6f}",
                             "final_pwm": f"{diag['pwm']:.6f}",
                             "mv_write_raw": mv_raw,
                             "centroid": f"{diag['centroid']:.6f}",
@@ -500,12 +529,9 @@ def main() -> int:
                     log_rows += 1
                     next_log_t += log_period_s
 
-                    # If the process stalled for longer than one log period,
-                    # skip missed logging slots instead of dumping backlog rows.
                     if next_log_t <= cycle_t:
                         next_log_t = cycle_t + log_period_s
 
-                    # Flush roughly once per second at the configured log rate.
                     rows_per_flush = max(1, int(round(1000.0 / args.log_period_ms)))
                     if log_rows % rows_per_flush == 0:
                         csv_file.flush()
@@ -515,7 +541,6 @@ def main() -> int:
                 if remaining_s > 0.0:
                     time.sleep(remaining_s)
                 elif -remaining_s > period_s:
-                    # Do not accumulate an ever-growing backlog after a long stall.
                     next_deadline = time.perf_counter()
 
     except KeyboardInterrupt:
