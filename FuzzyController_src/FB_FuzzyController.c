@@ -15,6 +15,11 @@ static float FuzzyController_Clamp(float value, float minValue, float maxValue)
     return value;
 }
 
+static float FuzzyController_Abs(float value)
+{
+    return (value >= 0.0f) ? value : -value;
+}
+
 static bool FuzzyController_IsFinite(float value)
 {
     return (value == value) &&
@@ -46,6 +51,23 @@ static float FuzzyController_GetSafeOutputMin(const FB_FuzzyController_t *fb)
     return FUZZY_CONTROLLER_PWM_MIN;
 }
 
+static bool FuzzyController_IsDerivativeConfigValid(const FB_FuzzyController_t *fb)
+{
+    if (fb == NULL) return false;
+
+    if (!FuzzyController_IsFinite(fb->config.DErrorFilterTau_s) ||
+        (fb->config.DErrorFilterTau_s < 0.0f) ||
+        (fb->config.DErrorFilterTau_s > FUZZY_CONTROLLER_DERROR_FILTER_TAU_MAX_S))
+        return false;
+
+    if (!FuzzyController_IsFinite(fb->config.DErrorDeadband_c_per_s) ||
+        (fb->config.DErrorDeadband_c_per_s < 0.0f) ||
+        (fb->config.DErrorDeadband_c_per_s > FUZZY_CONTROLLER_DERROR_DEADBAND_MAX))
+        return false;
+
+    return true;
+}
+
 static bool FuzzyController_IsConfigValid(const FB_FuzzyController_t *fb)
 {
     if (fb == NULL) return false;
@@ -55,6 +77,9 @@ static bool FuzzyController_IsConfigValid(const FB_FuzzyController_t *fb)
 
     if (!FuzzyController_IsFinite(fb->config.Ts) ||
         (fb->config.Ts <= FUZZY_CONTROLLER_EPSILON))
+        return false;
+
+    if (!FuzzyController_IsDerivativeConfigValid(fb))
         return false;
 
     if (!FuzzyController_IsFinite(fb->config.OutputMin) ||
@@ -67,6 +92,60 @@ static bool FuzzyController_IsConfigValid(const FB_FuzzyController_t *fb)
         return false;
 
     return true;
+}
+
+static float FuzzyController_FilterDError(
+    FB_FuzzyController_t *fb,
+    float rawDError)
+{
+    float filtered;
+    float effective;
+    float alpha;
+    float magnitude;
+
+    if ((fb == NULL) || !FuzzyController_IsFinite(rawDError))
+        return 0.0f;
+
+    if (fb->config.DErrorFilterTau_s <= FUZZY_CONTROLLER_EPSILON)
+    {
+        filtered = rawDError;
+    }
+    else
+    {
+        alpha = fb->config.Ts /
+                (fb->config.DErrorFilterTau_s + fb->config.Ts);
+        alpha = FuzzyController_Clamp(alpha, 0.0f, 1.0f);
+        filtered = fb->state.FilteredDError +
+                   alpha * (rawDError - fb->state.FilteredDError);
+    }
+
+    if (!FuzzyController_IsFinite(filtered)) filtered = 0.0f;
+    fb->state.FilteredDError = filtered;
+
+    magnitude = FuzzyController_Abs(filtered);
+    if (magnitude <= fb->config.DErrorDeadband_c_per_s)
+    {
+        effective = 0.0f;
+    }
+    else
+    {
+        magnitude -= fb->config.DErrorDeadband_c_per_s;
+        effective = (filtered >= 0.0f) ? magnitude : -magnitude;
+    }
+
+    return FuzzyController_IsFinite(effective) ? effective : 0.0f;
+}
+
+static void FuzzyController_ClearDerivativeState(FB_FuzzyController_t *fb)
+{
+    if (fb == NULL) return;
+
+    fb->state.RawDError = 0.0f;
+    fb->state.FilteredDError = 0.0f;
+    fb->state.dError = 0.0f;
+    fb->scaling.State.dError = 0.0f;
+    fb->scaling.State.PVRate = 0.0f;
+    fb->scaling.State.NormalizedDError = 0.0f;
 }
 
 static void FuzzyController_ForceOutputMin(FB_FuzzyController_t *fb)
@@ -88,6 +167,8 @@ void FB_FuzzyController_Init(FB_FuzzyController_t *fb)
     fb->config.SampleTime_ms = FUZZY_CONTROLLER_SAMPLE_TIME_DEFAULT_MS;
     fb->config.Ts = FuzzyController_SampleTimeToSeconds(
         fb->config.SampleTime_ms);
+    fb->config.DErrorFilterTau_s = FUZZY_CONTROLLER_DERROR_FILTER_TAU_DEFAULT_S;
+    fb->config.DErrorDeadband_c_per_s = FUZZY_CONTROLLER_DERROR_DEADBAND_DEFAULT;
     fb->config.Enable = true;
     fb->config.OutputMin = FUZZY_CONTROLLER_PWM_MIN;
     fb->config.OutputMax = FUZZY_CONTROLLER_PWM_MAX;
@@ -95,6 +176,8 @@ void FB_FuzzyController_Init(FB_FuzzyController_t *fb)
     fb->state.SV = 0.0f;
     fb->state.PV = 0.0f;
     fb->state.Error = 0.0f;
+    fb->state.RawDError = 0.0f;
+    fb->state.FilteredDError = 0.0f;
     fb->state.dError = 0.0f;
     fb->state.PWM = 0.0f;
     fb->state.Centroid = 0.0f;
@@ -132,15 +215,9 @@ bool FB_FuzzyController_SetSampleTime(
     fb->config.Ts = Ts;
     fb->scaling.Config.Ts = Ts;
 
-    /*
-     * This API is intended for configuration before cyclic execution. If it is
-     * used again while stopped, restart derivative references cleanly without
-     * changing the configured output limits or rule/membership data.
-     */
+    /* Configuration-stage change: restart derivative references cleanly. */
     fb->state.firstRun = true;
-    fb->state.dError = 0.0f;
-    fb->scaling.State.dError = 0.0f;
-    fb->scaling.State.PVRate = 0.0f;
+    FuzzyController_ClearDerivativeState(fb);
 
     return true;
 }
@@ -151,9 +228,34 @@ uint32_t FB_FuzzyController_GetSampleTime(const FB_FuzzyController_t *fb)
     return fb->config.SampleTime_ms;
 }
 
+bool FB_FuzzyController_SetDerivativeFilter(
+    FB_FuzzyController_t *fb,
+    float filterTau_s,
+    float deadband_c_per_s)
+{
+    if (fb == NULL) return false;
+
+    if (!FuzzyController_IsFinite(filterTau_s) ||
+        (filterTau_s < 0.0f) ||
+        (filterTau_s > FUZZY_CONTROLLER_DERROR_FILTER_TAU_MAX_S))
+        return false;
+
+    if (!FuzzyController_IsFinite(deadband_c_per_s) ||
+        (deadband_c_per_s < 0.0f) ||
+        (deadband_c_per_s > FUZZY_CONTROLLER_DERROR_DEADBAND_MAX))
+        return false;
+
+    fb->config.DErrorFilterTau_s = filterTau_s;
+    fb->config.DErrorDeadband_c_per_s = deadband_c_per_s;
+    fb->state.firstRun = true;
+    FuzzyController_ClearDerivativeState(fb);
+    return true;
+}
+
 float FB_FuzzyController_Run(FB_FuzzyController_t *fb, float SV, float PV)
 {
     float rulePWM;
+    float rawDError;
 
     if (fb == NULL) return 0.0f;
 
@@ -165,7 +267,7 @@ float FB_FuzzyController_Run(FB_FuzzyController_t *fb, float SV, float PV)
     {
         FuzzyController_ForceOutputMin(fb);
         fb->state.Error = 0.0f;
-        fb->state.dError = 0.0f;
+        FuzzyController_ClearDerivativeState(fb);
         fb->state.firstRun = true;
         return fb->state.PWM;
     }
@@ -176,7 +278,7 @@ float FB_FuzzyController_Run(FB_FuzzyController_t *fb, float SV, float PV)
         fb->state.SV = SV;
         fb->state.PV = PV;
         fb->state.Error = 0.0f;
-        fb->state.dError = 0.0f;
+        FuzzyController_ClearDerivativeState(fb);
         FuzzyController_ForceOutputMin(fb);
         fb->state.firstRun = true;
         return fb->state.PWM;
@@ -186,6 +288,7 @@ float FB_FuzzyController_Run(FB_FuzzyController_t *fb, float SV, float PV)
     {
         /* A disabled heater controller must not retain a stale output state. */
         FuzzyController_ForceOutputMin(fb);
+        FuzzyController_ClearDerivativeState(fb);
         fb->state.firstRun = true;
         return fb->state.PWM;
     }
@@ -206,13 +309,30 @@ float FB_FuzzyController_Run(FB_FuzzyController_t *fb, float SV, float PV)
     {
         fb->scaling.State.PreviousError = fb->state.Error;
         fb->scaling.State.PreviousPV = PV;
+        fb->state.RawDError = 0.0f;
+        fb->state.FilteredDError = 0.0f;
+        fb->state.dError = 0.0f;
         fb->state.firstRun = false;
     }
 
     FB_FuzzyScaling_Run(&fb->scaling, SV, PV);
 
     fb->state.Error = fb->scaling.State.Error;
-    fb->state.dError = fb->scaling.State.dError;
+
+    /*
+     * Scaling computes the mathematically raw derivative.  Preserve it for
+     * diagnostics, then condition it before fuzzy inference.  This prevents a
+     * 0.1 degC sensor LSB at 20 ms from appearing as an immediate +/-5 degC/s
+     * full-scale fuzzy event.
+     */
+    rawDError = fb->scaling.State.dError;
+    fb->state.RawDError = rawDError;
+    fb->state.dError = FuzzyController_FilterDError(fb, rawDError);
+
+    fb->scaling.State.dError = fb->state.dError;
+    fb->scaling.State.NormalizedDError = FB_FuzzyScaling_NormalizeDError(
+        fb->state.dError,
+        fb->scaling.State.Kde);
 
     FB_FuzzyMembership_Run(
         &fb->membership,
@@ -264,6 +384,8 @@ void FB_FuzzyController_Reset(FB_FuzzyController_t *fb)
     fb->state.SV = 0.0f;
     fb->state.PV = 0.0f;
     fb->state.Error = 0.0f;
+    fb->state.RawDError = 0.0f;
+    fb->state.FilteredDError = 0.0f;
     fb->state.dError = 0.0f;
     fb->state.Centroid = 0.0f;
     fb->state.firstRun = true;
