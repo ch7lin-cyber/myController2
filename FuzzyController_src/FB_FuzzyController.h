@@ -1,11 +1,12 @@
 /******************************************************************************
  * File    : FB_FuzzyController.h
- * Version : V2.5
+ * Version : V2.6
  * Brief   : IEC61131-3 Style Fuzzy Temperature Controller
  *
  * Execution chain:
- *   SV/PV -> Adaptive Scaling -> dError filter/deadband -> Membership
+ *   SV/PV -> Adaptive Scaling -> derivative-on-PV filter/deadband -> Membership
  *         -> 7x7 Sugeno Rule -> Output Manager / Hybrid FF Output
+ *         -> optional large-error boost override
  *
  * NOTE:
  *   The active controller uses zero-order Sugeno/singleton inference.
@@ -38,6 +39,8 @@ extern "C" {
 #define FUZZY_CONTROLLER_DERROR_FILTER_TAU_MAX_S        (10.0f)
 #define FUZZY_CONTROLLER_DERROR_DEADBAND_DEFAULT        (0.20f)
 #define FUZZY_CONTROLLER_DERROR_DEADBAND_MAX            (100.0f)
+#define FUZZY_CONTROLLER_BOOST_ENTER_DEFAULT_C          (20.0f)
+#define FUZZY_CONTROLLER_BOOST_EXIT_DEFAULT_C           (18.0f)
 #define FUZZY_INPUT_COUNT                               (7U)
 
 typedef struct
@@ -48,6 +51,11 @@ typedef struct
     /* Derivative conditioning for quantized temperature sensors. */
     float DErrorFilterTau_s;
     float DErrorDeadband_c_per_s;
+
+    /* Large positive error boost with hysteresis. */
+    bool EnableBoost;
+    float BoostEnterError_c;
+    float BoostExitError_c;
 
     /* false = legacy absolute PWM path, true = FF + fuzzy correction path. */
     bool UseHybridOutput;
@@ -63,13 +71,14 @@ typedef struct
     float PV;
     float Error;
 
-    /* Diagnostics: raw -> LPF -> soft-deadband value used by Fuzzy. */
+    /* Diagnostics: raw derivative-on-PV -> LPF -> soft-deadband value used by Fuzzy. */
     float RawDError;
     float FilteredDError;
     float dError;
 
     float PWM;
     float Centroid;
+    bool BoostActive;
     bool initialized;
     bool firstRun;
 } FuzzyControllerState_t;
@@ -98,6 +107,12 @@ MY_API bool FB_FuzzyController_SetDerivativeFilter(
     FB_FuzzyController_t *fb,
     float filterTau_s,
     float deadband_c_per_s);
+
+MY_API bool FB_FuzzyController_SetBoostConfig(
+    FB_FuzzyController_t *fb,
+    bool enable,
+    float enterError_c,
+    float exitError_c);
 
 /*
  * Enable/disable the hybrid output path.
