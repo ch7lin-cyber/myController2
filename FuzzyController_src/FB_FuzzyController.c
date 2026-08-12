@@ -68,6 +68,22 @@ static bool FuzzyController_IsDerivativeConfigValid(const FB_FuzzyController_t *
     return true;
 }
 
+static bool FuzzyController_IsBoostConfigValid(const FB_FuzzyController_t *fb)
+{
+    if (fb == NULL) return false;
+
+    if (!FuzzyController_IsFinite(fb->config.BoostEnterError_c) ||
+        !FuzzyController_IsFinite(fb->config.BoostExitError_c))
+        return false;
+
+    if ((fb->config.BoostEnterError_c < 0.0f) ||
+        (fb->config.BoostExitError_c < 0.0f) ||
+        (fb->config.BoostExitError_c > fb->config.BoostEnterError_c))
+        return false;
+
+    return true;
+}
+
 static bool FuzzyController_IsConfigValid(const FB_FuzzyController_t *fb)
 {
     if (fb == NULL) return false;
@@ -80,6 +96,9 @@ static bool FuzzyController_IsConfigValid(const FB_FuzzyController_t *fb)
         return false;
 
     if (!FuzzyController_IsDerivativeConfigValid(fb))
+        return false;
+
+    if (!FuzzyController_IsBoostConfigValid(fb))
         return false;
 
     if (!FuzzyController_IsFinite(fb->config.OutputMin) ||
@@ -153,6 +172,7 @@ static void FuzzyController_ForceOutputMin(FB_FuzzyController_t *fb)
     const float safeMin = FuzzyController_GetSafeOutputMin(fb);
 
     fb->state.PWM = safeMin;
+    fb->state.BoostActive = false;
 
     fb->output.state.pwmFF = 0.0f;
     fb->output.state.fuzzyCorrection = 0.0f;
@@ -165,6 +185,57 @@ static void FuzzyController_ForceOutputMin(FB_FuzzyController_t *fb)
     fb->hybridOutput.state.biasPWM = 0.0f;
     fb->hybridOutput.state.targetPWM = safeMin;
     fb->hybridOutput.state.outputPWM = safeMin;
+}
+
+static void FuzzyController_UpdateBoostState(FB_FuzzyController_t *fb)
+{
+    bool wasActive;
+
+    if (fb == NULL) return;
+
+    wasActive = fb->state.BoostActive;
+
+    if (!fb->config.EnableBoost)
+    {
+        fb->state.BoostActive = false;
+        return;
+    }
+
+    if (fb->state.BoostActive)
+    {
+        if (fb->state.Error < fb->config.BoostExitError_c)
+            fb->state.BoostActive = false;
+    }
+    else
+    {
+        if (fb->state.Error > fb->config.BoostEnterError_c)
+            fb->state.BoostActive = true;
+    }
+
+    /* A new large-error transient must not inherit old steady-state bias. */
+    if (!wasActive && fb->state.BoostActive)
+        fb->hybridOutput.state.biasPWM = 0.0f;
+}
+
+static void FuzzyController_ApplyBoostOutput(FB_FuzzyController_t *fb)
+{
+    float forced;
+
+    if (fb == NULL) return;
+
+    forced = FuzzyController_Clamp(
+        FUZZY_CONTROLLER_PWM_MAX,
+        fb->config.OutputMin,
+        fb->config.OutputMax);
+
+    fb->state.PWM = forced;
+
+    /* Bypass positive slew while boost is active. */
+    fb->hybridOutput.state.targetPWM = forced;
+    fb->hybridOutput.state.outputPWM = forced;
+    fb->output.state.targetPWM = forced;
+    fb->output.state.outputPWM = forced;
+    fb->output.state.previousPWM = forced;
 }
 
 void FB_FuzzyController_LoadIdentifiedFeedForward(FB_FuzzyController_t *fb)
@@ -200,6 +271,9 @@ void FB_FuzzyController_Init(FB_FuzzyController_t *fb)
         fb->config.SampleTime_ms);
     fb->config.DErrorFilterTau_s = FUZZY_CONTROLLER_DERROR_FILTER_TAU_DEFAULT_S;
     fb->config.DErrorDeadband_c_per_s = FUZZY_CONTROLLER_DERROR_DEADBAND_DEFAULT;
+    fb->config.EnableBoost = true;
+    fb->config.BoostEnterError_c = FUZZY_CONTROLLER_BOOST_ENTER_DEFAULT_C;
+    fb->config.BoostExitError_c = FUZZY_CONTROLLER_BOOST_EXIT_DEFAULT_C;
     fb->config.UseHybridOutput = false;
     fb->config.Enable = true;
     fb->config.OutputMin = FUZZY_CONTROLLER_PWM_MIN;
@@ -213,6 +287,7 @@ void FB_FuzzyController_Init(FB_FuzzyController_t *fb)
     fb->state.dError = 0.0f;
     fb->state.PWM = 0.0f;
     fb->state.Centroid = 0.0f;
+    fb->state.BoostActive = false;
     fb->state.initialized = false;
     fb->state.firstRun = true;
 
@@ -283,6 +358,31 @@ bool FB_FuzzyController_SetDerivativeFilter(
     fb->config.DErrorDeadband_c_per_s = deadband_c_per_s;
     fb->state.firstRun = true;
     FuzzyController_ClearDerivativeState(fb);
+    return true;
+}
+
+bool FB_FuzzyController_SetBoostConfig(
+    FB_FuzzyController_t *fb,
+    bool enable,
+    float enterError_c,
+    float exitError_c)
+{
+    if (fb == NULL) return false;
+
+    if (!FuzzyController_IsFinite(enterError_c) ||
+        !FuzzyController_IsFinite(exitError_c) ||
+        (enterError_c < 0.0f) ||
+        (exitError_c < 0.0f) ||
+        (exitError_c > enterError_c))
+        return false;
+
+    fb->config.EnableBoost = enable;
+    fb->config.BoostEnterError_c = enterError_c;
+    fb->config.BoostExitError_c = exitError_c;
+
+    if (!enable)
+        fb->state.BoostActive = false;
+
     return true;
 }
 
@@ -371,7 +471,12 @@ float FB_FuzzyController_Run(FB_FuzzyController_t *fb, float SV, float PV)
     FB_FuzzyScaling_Run(&fb->scaling, SV, PV);
 
     fb->state.Error = fb->scaling.State.Error;
-    rawDError = fb->scaling.State.dError;
+
+    /*
+     * Derivative-on-measurement: dError = -dPV/dt.
+     * This preserves temperature-trend damping while eliminating SV-step kick.
+     */
+    rawDError = -fb->scaling.State.PVRate;
     fb->state.RawDError = rawDError;
     fb->state.dError = FuzzyController_FilterDError(fb, rawDError);
 
@@ -394,6 +499,8 @@ float FB_FuzzyController_Run(FB_FuzzyController_t *fb, float SV, float PV)
         fb->config.OutputMax
     );
 
+    FuzzyController_UpdateBoostState(fb);
+
     if (fb->config.UseHybridOutput)
     {
         fb->state.PWM = FB_FuzzyHybridOutput_Run(
@@ -411,6 +518,9 @@ float FB_FuzzyController_Run(FB_FuzzyController_t *fb, float SV, float PV)
             rulePWM,
             fb->config.Ts);
     }
+
+    if (fb->state.BoostActive)
+        FuzzyController_ApplyBoostOutput(fb);
 
     if (fb->config.OutputMax > fb->config.OutputMin + FUZZY_CONTROLLER_EPSILON)
     {
@@ -444,6 +554,7 @@ void FB_FuzzyController_Reset(FB_FuzzyController_t *fb)
     fb->state.FilteredDError = 0.0f;
     fb->state.dError = 0.0f;
     fb->state.Centroid = 0.0f;
+    fb->state.BoostActive = false;
     fb->state.firstRun = true;
 
     fb->config.Ts = FuzzyController_SampleTimeToSeconds(
