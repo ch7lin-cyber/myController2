@@ -29,6 +29,8 @@ int main(void)
 
     assert(FB_FuzzyController_GetSampleTime(&controller) == 20U);
     assert(nearly_equal(controller.config.Ts, 0.020f));
+    assert(nearly_equal(controller.config.DErrorFilterTau_s, 0.20f));
+    assert(nearly_equal(controller.config.DErrorDeadband_c_per_s, 0.20f));
 
     assert(!FB_FuzzyController_SetSampleTime(&controller, 0U));
     assert(!FB_FuzzyController_SetSampleTime(&controller, 6001U));
@@ -57,6 +59,27 @@ int main(void)
     assert(nearly_equal(controller.config.Ts, 0.100f));
     assert(nearly_equal(controller.scaling.Config.Ts, 0.100f));
 
-    printf("C all-header/API + sample-time smoke test: PASS (PWM=%.3f)\n", pwm);
+    /*
+     * Regression from real 20 ms / 0.1 degC sensor data:
+     * one LSB step creates raw 5 degC/s.  The fuzzy input must no longer
+     * jump directly to full-scale normalized dError.
+     */
+    FB_FuzzyController_Reset(&controller);
+    assert(FB_FuzzyController_SetSampleTime(&controller, 20U));
+    assert(FB_FuzzyController_SetDerivativeFilter(&controller, 0.20f, 0.20f));
+    controller.config.Enable = true;
+
+    (void)FB_FuzzyController_Run(&controller, 130.0f, 120.8f);
+    (void)FB_FuzzyController_Run(&controller, 130.0f, 120.9f);
+
+    assert(fabsf(controller.state.RawDError) > 4.9f);
+    assert(fabsf(controller.state.FilteredDError) < 1.0f);
+    assert(fabsf(controller.state.dError) < 1.0f);
+    assert(fabsf(controller.scaling.State.NormalizedDError) < 1.0f);
+
+    assert(!FB_FuzzyController_SetDerivativeFilter(&controller, -0.1f, 0.2f));
+    assert(!FB_FuzzyController_SetDerivativeFilter(&controller, 0.2f, -0.1f));
+
+    printf("C all-header/API + sample-time + dError-filter smoke test: PASS (PWM=%.3f)\n", pwm);
     return 0;
 }
