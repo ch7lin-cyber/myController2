@@ -76,6 +76,16 @@ float FuzzyPc_GetError(void)
     return g_initialized ? g_controller.state.Error : 0.0f;
 }
 
+float FuzzyPc_GetRawDError(void)
+{
+    return g_initialized ? g_controller.state.RawDError : 0.0f;
+}
+
+float FuzzyPc_GetFilteredDError(void)
+{
+    return g_initialized ? g_controller.state.FilteredDError : 0.0f;
+}
+
 float FuzzyPc_GetDError(void)
 {
     return g_initialized ? g_controller.state.dError : 0.0f;
