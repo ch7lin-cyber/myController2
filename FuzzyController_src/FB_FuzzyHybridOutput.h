@@ -42,6 +42,10 @@ typedef struct
     float biasKi;
     float biasMin;
     float biasMax;
+
+    /* Bias trim is only allowed when |SV-PV| <= this band. */
+    float biasLearningErrorBand_c;
+
     bool enableFeedForward;
     bool enableBiasTrim;
     bool enableSlew;
