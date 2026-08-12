@@ -17,6 +17,11 @@ Safety policy:
     - STOP commands MV=0.
     - Communication or controller exceptions force STOP and best-effort MV=0.
     - Ctrl+C also forces MV=0 before exit.
+
+Timing policy:
+    - --period-ms controls the real closed-loop execution period.
+    - --log-period-ms only controls CSV logging frequency.
+      It does NOT change Modbus read/write or Fuzzy execution frequency.
 """
 
 from __future__ import annotations
@@ -25,7 +30,6 @@ import argparse
 import csv
 import ctypes
 import math
-import os
 import queue
 import sys
 import threading
@@ -256,7 +260,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--device-id", type=int, default=1)
     parser.add_argument("--pv-address", type=int, default=92)
     parser.add_argument("--mv-address", type=int, default=108)
-    parser.add_argument("--period-ms", type=int, default=20)
+    parser.add_argument(
+        "--period-ms",
+        type=int,
+        default=20,
+        help="Closed-loop control period in ms; default 20 ms (50 Hz)",
+    )
+    parser.add_argument(
+        "--log-period-ms",
+        type=int,
+        default=100,
+        help="CSV logging period in ms; default 100 ms (10 Hz). Does not change control period.",
+    )
     parser.add_argument("--sv", type=float, default=100.0)
     parser.add_argument(
         "--pv-scale",
@@ -288,6 +303,12 @@ def main() -> int:
 
     if not (1 <= args.period_ms <= 6000):
         print("ERROR: --period-ms must be 1..6000", file=sys.stderr)
+        return 2
+    if args.log_period_ms < args.period_ms:
+        print("ERROR: --log-period-ms must be >= --period-ms", file=sys.stderr)
+        return 2
+    if args.log_period_ms > 60000:
+        print("ERROR: --log-period-ms must be <= 60000", file=sys.stderr)
         return 2
     if not math.isfinite(args.sv):
         print("ERROR: --sv must be finite", file=sys.stderr)
@@ -353,10 +374,14 @@ def main() -> int:
     start_t = time.perf_counter()
     previous_cycle_t = start_t
     next_deadline = start_t
+    next_log_t = start_t
     period_s = args.period_ms / 1000.0
+    log_period_s = args.log_period_ms / 1000.0
+    log_rows = 0
 
     print(f"Connected to {args.ip}:{args.port}, device_id={args.device_id}")
-    print(f"PV={args.pv_address}, MV={args.mv_address}, period={args.period_ms} ms")
+    print(f"PV={args.pv_address}, MV={args.mv_address}, control period={args.period_ms} ms")
+    print(f"CSV logging period={args.log_period_ms} ms (~{1000.0 / args.log_period_ms:.2f} rows/s)")
     print(f"Fuzzy library: {library_path}")
     print(f"CSV: {csv_path}")
     print("Initial state: STOP (MV=0)")
@@ -443,35 +468,49 @@ def main() -> int:
                 remaining_s = next_deadline - end_work_t
                 overrun_ms = max(0.0, -remaining_s * 1000.0)
 
-                writer.writerow(
-                    {
-                        "timestamp_utc": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
-                        "elapsed_s": f"{cycle_t - start_t:.6f}",
-                        "cycle": state.cycle,
-                        "mode": "RUN" if state.run else "STOP",
-                        "sv_c": f"{state.sv_c:.6f}",
-                        "pv_raw": pv_raw,
-                        "pv_c": "" if not math.isfinite(pv_c) else f"{pv_c:.6f}",
-                        "error_c": f"{diag['error_c']:.6f}",
-                        "derror_c_per_s": f"{diag['derror_c_per_s']:.6f}",
-                        "normalized_error": f"{diag['normalized_error']:.6f}",
-                        "normalized_derror": f"{diag['normalized_derror']:.6f}",
-                        "rule_pwm": f"{diag['rule_pwm']:.6f}",
-                        "final_pwm": f"{diag['pwm']:.6f}",
-                        "mv_write_raw": mv_raw,
-                        "centroid": f"{diag['centroid']:.6f}",
-                        "read_ms": f"{read_ms:.6f}",
-                        "fuzzy_ms": f"{fuzzy_ms:.6f}",
-                        "write_ms": f"{write_ms:.6f}",
-                        "actual_period_ms": f"{actual_period_ms:.6f}",
-                        "overrun_ms": f"{overrun_ms:.6f}",
-                        "comm_errors": state.comm_errors,
-                        "status": status,
-                    }
-                )
+                # CSV logging is deliberately decimated from the control loop.
+                # Example: 20 ms control + 100 ms log => 50 Hz control, 10 Hz CSV.
+                if cycle_t >= next_log_t:
+                    writer.writerow(
+                        {
+                            "timestamp_utc": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
+                            "elapsed_s": f"{cycle_t - start_t:.6f}",
+                            "cycle": state.cycle,
+                            "mode": "RUN" if state.run else "STOP",
+                            "sv_c": f"{state.sv_c:.6f}",
+                            "pv_raw": pv_raw,
+                            "pv_c": "" if not math.isfinite(pv_c) else f"{pv_c:.6f}",
+                            "error_c": f"{diag['error_c']:.6f}",
+                            "derror_c_per_s": f"{diag['derror_c_per_s']:.6f}",
+                            "normalized_error": f"{diag['normalized_error']:.6f}",
+                            "normalized_derror": f"{diag['normalized_derror']:.6f}",
+                            "rule_pwm": f"{diag['rule_pwm']:.6f}",
+                            "final_pwm": f"{diag['pwm']:.6f}",
+                            "mv_write_raw": mv_raw,
+                            "centroid": f"{diag['centroid']:.6f}",
+                            "read_ms": f"{read_ms:.6f}",
+                            "fuzzy_ms": f"{fuzzy_ms:.6f}",
+                            "write_ms": f"{write_ms:.6f}",
+                            "actual_period_ms": f"{actual_period_ms:.6f}",
+                            "overrun_ms": f"{overrun_ms:.6f}",
+                            "comm_errors": state.comm_errors,
+                            "status": status,
+                        }
+                    )
+                    log_rows += 1
+                    next_log_t += log_period_s
+
+                    # If the process stalled for longer than one log period,
+                    # skip missed logging slots instead of dumping backlog rows.
+                    if next_log_t <= cycle_t:
+                        next_log_t = cycle_t + log_period_s
+
+                    # Flush roughly once per second at the configured log rate.
+                    rows_per_flush = max(1, int(round(1000.0 / args.log_period_ms)))
+                    if log_rows % rows_per_flush == 0:
+                        csv_file.flush()
+
                 state.cycle += 1
-                if state.cycle % 50 == 0:
-                    csv_file.flush()
 
                 if remaining_s > 0.0:
                     time.sleep(remaining_s)
