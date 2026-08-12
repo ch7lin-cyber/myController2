@@ -43,8 +43,13 @@ typedef struct
     float biasMin;
     float biasMax;
 
-    /* Bias trim is only allowed when |SV-PV| <= this band. */
-    float biasLearningErrorBand_c;
+    /*
+     * Heater-specific asymmetric bias learning bands.
+     * Positive error: only learn close below SV, preventing warm-up windup.
+     * Negative error: allow a wider band so overshoot can keep trimming output.
+     */
+    float biasPositiveLearningBand_c;
+    float biasNegativeLearningBand_c;
 
     bool enableFeedForward;
     bool enableBiasTrim;
