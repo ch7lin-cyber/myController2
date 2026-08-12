@@ -94,6 +94,10 @@ if(MYCONTROLLER_BUILD_PC_CONTROL)
 
     if(WIN32)
         target_compile_definitions(fuzzy_pc_bridge PRIVATE SSM_FB_BUILD_DLL)
+        # MinGW normally prefixes DLL targets with "lib".  The Python tool
+        # expects fuzzy_pc_bridge.dll on Windows, so normalize the filename
+        # across MSVC and MinGW.
+        set_target_properties(fuzzy_pc_bridge PROPERTIES PREFIX "")
     elseif(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
         target_compile_definitions(fuzzy_pc_bridge PRIVATE SSM_FB_BUILD_SHARED)
         set_target_properties(fuzzy_pc_bridge PROPERTIES
