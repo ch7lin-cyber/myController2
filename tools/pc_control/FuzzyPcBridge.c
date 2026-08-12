@@ -15,6 +15,9 @@ int FuzzyPc_Init(uint32_t sample_time_ms)
         return 0;
     }
 
+    /* Branch3 experiment: use identified FF + fuzzy correction + slow bias trim. */
+    FB_FuzzyController_EnableHybridOutput(&g_controller, true);
+
     g_controller.config.Enable = false;
     g_initialized = 1;
     return 1;
@@ -104,6 +107,26 @@ float FuzzyPc_GetNormalizedDError(void)
 float FuzzyPc_GetRulePWM(void)
 {
     return g_initialized ? g_controller.ruleEngine.Result.RuleOutput : 0.0f;
+}
+
+float FuzzyPc_GetFeedForwardPWM(void)
+{
+    return g_initialized ? g_controller.hybridOutput.state.feedForwardPWM : 0.0f;
+}
+
+float FuzzyPc_GetFuzzyCorrectionPWM(void)
+{
+    return g_initialized ? g_controller.hybridOutput.state.fuzzyCorrectionPWM : 0.0f;
+}
+
+float FuzzyPc_GetBiasPWM(void)
+{
+    return g_initialized ? g_controller.hybridOutput.state.biasPWM : 0.0f;
+}
+
+float FuzzyPc_GetTargetPWM(void)
+{
+    return g_initialized ? g_controller.hybridOutput.state.targetPWM : 0.0f;
 }
 
 float FuzzyPc_GetPWM(void)
