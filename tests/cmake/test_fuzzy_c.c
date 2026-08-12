@@ -32,12 +32,14 @@ int main(void)
 
     assert(FB_FuzzyController_GetSampleTime(&controller) == 20U);
     assert(nearly_equal(controller.config.Ts, 0.020f));
-    assert(nearly_equal(controller.config.DErrorFilterTau_s, 0.20f));
+    assert(nearly_equal(controller.config.DErrorFilterTau_s, 0.50f));
     assert(nearly_equal(controller.config.DErrorDeadband_c_per_s, 0.20f));
     assert(controller.config.EnableBoost == true);
     assert(nearly_equal(controller.config.BoostEnterError_c, 20.0f));
     assert(nearly_equal(controller.config.BoostExitError_c, 18.0f));
     assert(controller.config.UseHybridOutput == false);
+    assert(nearly_equal(controller.hybridOutput.config.biasPositiveLearningBand_c, 1.0f));
+    assert(nearly_equal(controller.hybridOutput.config.biasNegativeLearningBand_c, 5.0f));
 
     assert(!FB_FuzzyController_SetSampleTime(&controller, 0U));
     assert(!FB_FuzzyController_SetSampleTime(&controller, 6001U));
@@ -80,6 +82,19 @@ int main(void)
     assert(fabsf(controller.state.dError) < 1.0f);
     assert(fabsf(controller.scaling.State.NormalizedDError) < 1.0f);
 
+    /*
+     * New real-data regression: a 0.4 degC sample jump at 20 ms produces
+     * raw |dPV/dt| ~= 20 degC/s. The new 0.50 s default LPF must keep the
+     * effective derivative below 1 degC/s after one such jump.
+     */
+    FB_FuzzyController_Reset(&controller);
+    assert(FB_FuzzyController_SetDerivativeFilter(&controller, 0.50f, 0.20f));
+    (void)FB_FuzzyController_Run(&controller, 130.0f, 129.0f);
+    (void)FB_FuzzyController_Run(&controller, 130.0f, 129.4f);
+    assert(controller.state.RawDError < -19.0f);
+    assert(fabsf(controller.state.FilteredDError) < 0.80f);
+    assert(fabsf(controller.state.dError) < 0.60f);
+
     /* Derivative-on-PV: an SV step at constant PV must not create derivative kick. */
     FB_FuzzyController_Reset(&controller);
     assert(FB_FuzzyController_SetSampleTime(&controller, 20U));
@@ -99,16 +114,30 @@ int main(void)
     assert(ff130 > 390.0f);
     assert(ff130 < 405.0f);
 
-    /* Bias learning is only allowed close to SV. */
+    /*
+     * Heater bias learning is intentionally asymmetric:
+     *   +error: learn only within +1 C to avoid warm-up windup.
+     *   -error: keep learning down to -5 C to remove overshoot offset.
+     */
     FB_FuzzyHybridOutput_Init(&hybrid);
     hybrid.config.ffSize = 0U;
     hybrid.config.enableFeedForward = false;
     hybrid.state.biasPWM = 25.0f;
+
     bias_before = hybrid.state.biasPWM;
-    (void)FB_FuzzyHybridOutput_Run(&hybrid, 130.0f, 120.0f, 100.0f, 0.02f);
+    (void)FB_FuzzyHybridOutput_Run(&hybrid, 130.0f, 127.3f, 100.0f, 0.02f); /* +2.7 C */
     assert(nearly_equal(hybrid.state.biasPWM, bias_before));
-    (void)FB_FuzzyHybridOutput_Run(&hybrid, 130.0f, 129.0f, 100.0f, 0.02f);
+
+    (void)FB_FuzzyHybridOutput_Run(&hybrid, 130.0f, 129.0f, 100.0f, 0.02f); /* +1.0 C */
     assert(hybrid.state.biasPWM > bias_before);
+
+    bias_before = hybrid.state.biasPWM;
+    (void)FB_FuzzyHybridOutput_Run(&hybrid, 130.0f, 132.7f, 100.0f, 0.02f); /* -2.7 C */
+    assert(hybrid.state.biasPWM < bias_before);
+
+    bias_before = hybrid.state.biasPWM;
+    (void)FB_FuzzyHybridOutput_Run(&hybrid, 130.0f, 136.0f, 100.0f, 0.02f); /* -6.0 C */
+    assert(nearly_equal(hybrid.state.biasPWM, bias_before));
 
     /* Boost: enter above 20 C, hold through hysteresis, exit below 18 C. */
     FB_FuzzyController_Reset(&controller);
