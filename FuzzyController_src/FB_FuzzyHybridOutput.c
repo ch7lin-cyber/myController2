@@ -19,6 +19,11 @@ static float clampf_local(float x, float lo, float hi)
     return x;
 }
 
+static float absf_local(float x)
+{
+    return (x >= 0.0f) ? x : -x;
+}
+
 static float slew(float current, float target, float rate, float Ts)
 {
     float diff;
@@ -60,6 +65,7 @@ void FB_FuzzyHybridOutput_Init(FB_FuzzyHybridOutput_t *fb)
     fb->config.biasKi = 0.05f;
     fb->config.biasMin = -200.0f;
     fb->config.biasMax = 200.0f;
+    fb->config.biasLearningErrorBand_c = 2.0f;
 
     fb->config.enableFeedForward = true;
     fb->config.enableBiasTrim = true;
@@ -97,6 +103,8 @@ bool FB_FuzzyHybridOutput_SetConfig(
     if (!isFiniteFloat(config->biasKi) || config->biasKi < 0.0f) return false;
     if (!isFiniteFloat(config->biasMin) || !isFiniteFloat(config->biasMax) ||
         config->biasMin > config->biasMax) return false;
+    if (!isFiniteFloat(config->biasLearningErrorBand_c) ||
+        config->biasLearningErrorBand_c < 0.0f) return false;
     if (config->ffSize > FUZZY_HYBRID_FF_TABLE_SIZE) return false;
 
     for (i = 0U; i < config->ffSize; ++i)
@@ -157,6 +165,7 @@ float FB_FuzzyHybridOutput_Run(
     float candidateBias;
     float candidateTarget;
     bool blockIntegration = false;
+    bool allowBiasLearning = false;
 
     if (fb == NULL) return 0.0f;
 
@@ -181,7 +190,12 @@ float FB_FuzzyHybridOutput_Run(
     fb->state.fuzzyCorrectionPWM = correction;
 
     candidateBias = fb->state.biasPWM;
-    if (fb->config.enableBiasTrim && isFiniteFloat(Ts) && Ts > 0.0f)
+    allowBiasLearning = fb->config.enableBiasTrim &&
+                        isFiniteFloat(Ts) &&
+                        (Ts > 0.0f) &&
+                        (absf_local(error) <= fb->config.biasLearningErrorBand_c);
+
+    if (allowBiasLearning)
     {
         candidateBias += fb->config.biasKi * error * Ts;
         candidateBias = clampf_local(candidateBias,
@@ -192,12 +206,15 @@ float FB_FuzzyHybridOutput_Run(
     candidateTarget = ff + correction + candidateBias;
 
     /* Conditional anti-windup: do not integrate farther into saturation. */
-    if ((candidateTarget > fb->config.pwmMax) && (error > 0.0f))
-        blockIntegration = true;
-    else if ((candidateTarget < fb->config.pwmMin) && (error < 0.0f))
-        blockIntegration = true;
+    if (allowBiasLearning)
+    {
+        if ((candidateTarget > fb->config.pwmMax) && (error > 0.0f))
+            blockIntegration = true;
+        else if ((candidateTarget < fb->config.pwmMin) && (error < 0.0f))
+            blockIntegration = true;
+    }
 
-    if (!blockIntegration)
+    if (allowBiasLearning && !blockIntegration)
         fb->state.biasPWM = candidateBias;
 
     fb->state.targetPWM = ff + correction + fb->state.biasPWM;
