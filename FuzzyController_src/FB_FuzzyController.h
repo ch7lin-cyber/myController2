@@ -1,6 +1,6 @@
 /******************************************************************************
  * File    : FB_FuzzyController.h
- * Version : V2.6
+ * Version : V2.7
  * Brief   : IEC61131-3 Style Fuzzy Temperature Controller
  *
  * Execution chain:
@@ -35,7 +35,7 @@ extern "C" {
 #define FUZZY_CONTROLLER_SAMPLE_TIME_DEFAULT_MS        (20U)
 #define FUZZY_CONTROLLER_SAMPLE_TIME_MIN_MS            (1U)
 #define FUZZY_CONTROLLER_SAMPLE_TIME_MAX_MS            (6000U)
-#define FUZZY_CONTROLLER_DERROR_FILTER_TAU_DEFAULT_S    (0.20f)
+#define FUZZY_CONTROLLER_DERROR_FILTER_TAU_DEFAULT_S    (0.50f)
 #define FUZZY_CONTROLLER_DERROR_FILTER_TAU_MAX_S        (10.0f)
 #define FUZZY_CONTROLLER_DERROR_DEADBAND_DEFAULT        (0.20f)
 #define FUZZY_CONTROLLER_DERROR_DEADBAND_MAX            (100.0f)
