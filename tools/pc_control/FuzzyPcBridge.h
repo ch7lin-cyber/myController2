@@ -23,6 +23,10 @@ MY_API float FuzzyPc_GetDError(void);
 MY_API float FuzzyPc_GetNormalizedError(void);
 MY_API float FuzzyPc_GetNormalizedDError(void);
 MY_API float FuzzyPc_GetRulePWM(void);
+MY_API float FuzzyPc_GetFeedForwardPWM(void);
+MY_API float FuzzyPc_GetFuzzyCorrectionPWM(void);
+MY_API float FuzzyPc_GetBiasPWM(void);
+MY_API float FuzzyPc_GetTargetPWM(void);
 MY_API float FuzzyPc_GetPWM(void);
 MY_API float FuzzyPc_GetCentroid(void);
 
