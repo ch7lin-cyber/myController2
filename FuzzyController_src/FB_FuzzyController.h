@@ -1,11 +1,11 @@
 /******************************************************************************
  * File    : FB_FuzzyController.h
- * Version : V2.4
+ * Version : V2.5
  * Brief   : IEC61131-3 Style Fuzzy Temperature Controller
  *
  * Execution chain:
  *   SV/PV -> Adaptive Scaling -> dError filter/deadband -> Membership
- *         -> 7x7 Sugeno Rule -> PWM
+ *         -> 7x7 Sugeno Rule -> Output Manager / Hybrid FF Output
  *
  * NOTE:
  *   The active controller uses zero-order Sugeno/singleton inference.
@@ -22,6 +22,7 @@
 #include "FB_FuzzyMembership.h"
 #include "FB_FuzzyRule.h"
 #include "FB_FuzzyOutputManager.h"
+#include "FB_FuzzyHybridOutput.h"
 
 //------------------------------------------------------------------------------------//
 // C++ compatibility // DO NOT DELETE
@@ -41,23 +42,15 @@ extern "C" {
 
 typedef struct
 {
-    /*
-     * Public execution-period configuration.
-     * Set once before cyclic operation through FB_FuzzyController_SetSampleTime().
-     * Valid range: 1..6000 ms.
-     */
     uint32_t SampleTime_ms;
-
-    /* Cached seconds representation used internally by time-based algorithms. */
     float Ts;
 
-    /*
-     * Derivative conditioning for quantized temperature sensors.
-     * DErrorFilterTau_s = 0 disables LPF.
-     * DErrorDeadband_c_per_s = 0 disables the soft deadband.
-     */
+    /* Derivative conditioning for quantized temperature sensors. */
     float DErrorFilterTau_s;
     float DErrorDeadband_c_per_s;
+
+    /* false = legacy absolute PWM path, true = FF + fuzzy correction path. */
+    bool UseHybridOutput;
 
     bool Enable;
     float OutputMin;
@@ -89,14 +82,11 @@ typedef struct
     FB_FuzzyMembership_t membership;
     FB_FuzzyRule_t ruleEngine;
     FB_FuzzyOutputManager_t output;
+    FB_FuzzyHybridOutput_t hybridOutput;
 } FB_FuzzyController_t;
 
 MY_API void FB_FuzzyController_Init(FB_FuzzyController_t *fb);
 
-/*
- * Configure the fixed cyclic execution period.
- * Call during initialization/configuration, before normal cyclic Run().
- */
 MY_API bool FB_FuzzyController_SetSampleTime(
     FB_FuzzyController_t *fb,
     uint32_t sampleTime_ms);
@@ -104,14 +94,23 @@ MY_API bool FB_FuzzyController_SetSampleTime(
 MY_API uint32_t FB_FuzzyController_GetSampleTime(
     const FB_FuzzyController_t *fb);
 
-/* Configure dError low-pass filter and soft deadband. */
 MY_API bool FB_FuzzyController_SetDerivativeFilter(
     FB_FuzzyController_t *fb,
     float filterTau_s,
     float deadband_c_per_s);
 
-/* Execute at the configured controller period, default 20 ms. */
-/* Return value is an absolute PWM command, default 0..1000. */
+/*
+ * Enable/disable the hybrid output path.
+ * Default is false for backward compatibility.
+ */
+MY_API void FB_FuzzyController_EnableHybridOutput(
+    FB_FuzzyController_t *fb,
+    bool enable);
+
+/* Load the identified heater FF map used by branch3 experiments. */
+MY_API void FB_FuzzyController_LoadIdentifiedFeedForward(
+    FB_FuzzyController_t *fb);
+
 MY_API float FB_FuzzyController_Run(FB_FuzzyController_t *fb, float SV, float PV);
 
 MY_API void FB_FuzzyController_Reset(FB_FuzzyController_t *fb);
