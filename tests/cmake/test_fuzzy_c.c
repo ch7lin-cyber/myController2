@@ -21,6 +21,7 @@ int main(void)
     FB_FuzzyController_t controller;
     FB_FuzzyConfigManager_t config;
     float pwm;
+    float ff130;
 
     FB_FuzzyController_Init(&controller);
     FB_FuzzyConfig_Init(&config);
@@ -31,6 +32,7 @@ int main(void)
     assert(nearly_equal(controller.config.Ts, 0.020f));
     assert(nearly_equal(controller.config.DErrorFilterTau_s, 0.20f));
     assert(nearly_equal(controller.config.DErrorDeadband_c_per_s, 0.20f));
+    assert(controller.config.UseHybridOutput == false);
 
     assert(!FB_FuzzyController_SetSampleTime(&controller, 0U));
     assert(!FB_FuzzyController_SetSampleTime(&controller, 6001U));
@@ -59,11 +61,7 @@ int main(void)
     assert(nearly_equal(controller.config.Ts, 0.100f));
     assert(nearly_equal(controller.scaling.Config.Ts, 0.100f));
 
-    /*
-     * Regression from real 20 ms / 0.1 degC sensor data:
-     * one LSB step creates raw 5 degC/s.  The fuzzy input must no longer
-     * jump directly to full-scale normalized dError.
-     */
+    /* Real-data regression: 0.1 degC LSB at 20 ms => raw 5 degC/s. */
     FB_FuzzyController_Reset(&controller);
     assert(FB_FuzzyController_SetSampleTime(&controller, 20U));
     assert(FB_FuzzyController_SetDerivativeFilter(&controller, 0.20f, 0.20f));
@@ -80,6 +78,23 @@ int main(void)
     assert(!FB_FuzzyController_SetDerivativeFilter(&controller, -0.1f, 0.2f));
     assert(!FB_FuzzyController_SetDerivativeFilter(&controller, 0.2f, -0.1f));
 
-    printf("C all-header/API + sample-time + dError-filter smoke test: PASS (PWM=%.3f)\n", pwm);
+    /* Identified FF map: 130 C should interpolate near 397 PWM. */
+    ff130 = FB_FuzzyHybridOutput_CalcFF(&controller.hybridOutput, 130.0f);
+    assert(ff130 > 390.0f);
+    assert(ff130 < 405.0f);
+
+    FB_FuzzyController_Reset(&controller);
+    FB_FuzzyController_EnableHybridOutput(&controller, true);
+    controller.config.Enable = true;
+    pwm = FB_FuzzyController_Run(&controller, 130.0f, 120.0f);
+
+    assert(controller.config.UseHybridOutput == true);
+    assert(controller.hybridOutput.state.feedForwardPWM > 390.0f);
+    assert(controller.hybridOutput.state.targetPWM >= controller.hybridOutput.state.feedForwardPWM);
+    assert(isfinite(pwm));
+    assert(pwm >= 0.0f && pwm <= 1000.0f);
+
+    printf("C sample-time + dError-filter + hybrid-FF regression: PASS (PWM=%.3f, FF130=%.3f)\n",
+           pwm, ff130);
     return 0;
 }
