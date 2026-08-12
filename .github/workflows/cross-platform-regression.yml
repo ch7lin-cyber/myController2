@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - branch2
+      - branch3_variableAdjust
   pull_request:
     branches:
       - main
