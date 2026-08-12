@@ -9,11 +9,14 @@ This tool runs the existing C fuzzy controller on a PC and closes the loop throu
 - Device ID: `1`
 - PV holding register: `92`
 - MV holding register: `108`
-- Control period: `20 ms`
+- Control period: `20 ms` (50 Hz)
+- CSV logging period: `100 ms` (about 10 rows/s)
 - PV format: signed int16, `raw * 0.1 = degC`
 - MV format: Fuzzy PWM `0..1000` written directly to the register
 
-All of these values can be overridden from the command line.
+The control period and CSV logging period are independent. Reducing the CSV rate does not change the fuzzy controller, Modbus read rate, or Modbus write rate.
+
+All values can be overridden from the command line.
 
 ## 1. Build the C bridge
 
@@ -55,7 +58,15 @@ python tools/pc_control/fuzzy_modbus_control.py \
   --pv-address 92 \
   --mv-address 108 \
   --period-ms 20 \
+  --log-period-ms 100 \
   --sv 100
+```
+
+With these settings:
+
+```text
+Control loop : 20 ms  = 50 Hz
+CSV logging  : 100 ms = 10 Hz
 ```
 
 The program always starts in `STOP` and writes `MV=0` before control is enabled.
@@ -85,6 +96,22 @@ STOP: MV will be forced to 0
 cmd> quit
 ```
 
+## CSV logging frequency
+
+Use `--log-period-ms` to reduce CSV size without changing the closed-loop control period.
+
+Examples:
+
+```text
+--period-ms 20 --log-period-ms 20    -> control 50 Hz, CSV 50 Hz
+--period-ms 20 --log-period-ms 50    -> control 50 Hz, CSV 20 Hz
+--period-ms 20 --log-period-ms 100   -> control 50 Hz, CSV 10 Hz
+--period-ms 20 --log-period-ms 200   -> control 50 Hz, CSV 5 Hz
+--period-ms 20 --log-period-ms 1000  -> control 50 Hz, CSV 1 Hz
+```
+
+`--log-period-ms` must be greater than or equal to `--period-ms`. The default is `100 ms`.
+
 ## CSV data
 
 A timestamped CSV is created automatically. Important columns:
@@ -105,7 +132,9 @@ A timestamped CSV is created automatically. Important columns:
 - `comm_errors`: accumulated communication errors
 - `status`: error text when a cycle fails
 
-For analysis, provide the CSV after a run. These columns allow analysis of rise time, overshoot, steady-state error, PWM saturation, rule behavior, derivative behavior, communication jitter, and 20 ms scheduling overruns.
+For analysis, provide the CSV after a run. At the default 100 ms logging period, one minute of testing produces about 600 data rows instead of about 3000 rows at 20 ms logging.
+
+These columns allow analysis of rise time, overshoot, steady-state error, PWM saturation, rule behavior, derivative behavior, communication jitter, and 20 ms scheduling overruns.
 
 ## PV/MV scaling overrides
 
