@@ -17,6 +17,8 @@ MY_API int FuzzyPc_GetEnable(void);
 MY_API float FuzzyPc_Run(float sv, float pv);
 
 MY_API float FuzzyPc_GetError(void);
+MY_API float FuzzyPc_GetRawDError(void);
+MY_API float FuzzyPc_GetFilteredDError(void);
 MY_API float FuzzyPc_GetDError(void);
 MY_API float FuzzyPc_GetNormalizedError(void);
 MY_API float FuzzyPc_GetNormalizedDError(void);
