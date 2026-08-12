@@ -1,10 +1,11 @@
 /******************************************************************************
  * File    : FB_FuzzyController.h
- * Version : V2.3
+ * Version : V2.4
  * Brief   : IEC61131-3 Style Fuzzy Temperature Controller
  *
  * Execution chain:
- *   SV/PV -> Adaptive Scaling -> Membership -> 7x7 Sugeno Rule -> PWM
+ *   SV/PV -> Adaptive Scaling -> dError filter/deadband -> Membership
+ *         -> 7x7 Sugeno Rule -> PWM
  *
  * NOTE:
  *   The active controller uses zero-order Sugeno/singleton inference.
@@ -29,10 +30,14 @@ extern "C" {
 #endif
 //------------------------------------------------------------------------------------//
 
-#define FUZZY_CONTROLLER_SAMPLE_TIME_DEFAULT_MS   (20U)
-#define FUZZY_CONTROLLER_SAMPLE_TIME_MIN_MS       (1U)
-#define FUZZY_CONTROLLER_SAMPLE_TIME_MAX_MS       (6000U)
-#define FUZZY_INPUT_COUNT                          (7U)
+#define FUZZY_CONTROLLER_SAMPLE_TIME_DEFAULT_MS        (20U)
+#define FUZZY_CONTROLLER_SAMPLE_TIME_MIN_MS            (1U)
+#define FUZZY_CONTROLLER_SAMPLE_TIME_MAX_MS            (6000U)
+#define FUZZY_CONTROLLER_DERROR_FILTER_TAU_DEFAULT_S    (0.20f)
+#define FUZZY_CONTROLLER_DERROR_FILTER_TAU_MAX_S        (10.0f)
+#define FUZZY_CONTROLLER_DERROR_DEADBAND_DEFAULT        (0.20f)
+#define FUZZY_CONTROLLER_DERROR_DEADBAND_MAX            (100.0f)
+#define FUZZY_INPUT_COUNT                               (7U)
 
 typedef struct
 {
@@ -46,6 +51,14 @@ typedef struct
     /* Cached seconds representation used internally by time-based algorithms. */
     float Ts;
 
+    /*
+     * Derivative conditioning for quantized temperature sensors.
+     * DErrorFilterTau_s = 0 disables LPF.
+     * DErrorDeadband_c_per_s = 0 disables the soft deadband.
+     */
+    float DErrorFilterTau_s;
+    float DErrorDeadband_c_per_s;
+
     bool Enable;
     float OutputMin;
     float OutputMax;
@@ -56,7 +69,12 @@ typedef struct
     float SV;
     float PV;
     float Error;
+
+    /* Diagnostics: raw -> LPF -> soft-deadband value used by Fuzzy. */
+    float RawDError;
+    float FilteredDError;
     float dError;
+
     float PWM;
     float Centroid;
     bool initialized;
@@ -85,6 +103,12 @@ MY_API bool FB_FuzzyController_SetSampleTime(
 
 MY_API uint32_t FB_FuzzyController_GetSampleTime(
     const FB_FuzzyController_t *fb);
+
+/* Configure dError low-pass filter and soft deadband. */
+MY_API bool FB_FuzzyController_SetDerivativeFilter(
+    FB_FuzzyController_t *fb,
+    float filterTau_s,
+    float deadband_c_per_s);
 
 /* Execute at the configured controller period, default 20 ms. */
 /* Return value is an absolute PWM command, default 0..1000. */
