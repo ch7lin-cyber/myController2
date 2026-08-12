@@ -13,7 +13,7 @@ int main(void)
     FB_FuzzyController_t c;
     FB_FuzzyConfigManager_t cfg;
     FB_FuzzyHybridOutput_t hybrid;
-    float pwm,p0,p1,p2,ff130,bias;
+    float pwm,p0,p1,p2,p3,ff130,bias;
 
     FB_FuzzyController_Init(&c);
     FB_FuzzyConfig_Init(&cfg);
@@ -118,11 +118,25 @@ int main(void)
     assert((p1-p2)<=30.01f);
     assert(p2>=0.0f&&p2<=1000.0f);
 
-    /* Precision zone: Hybrid owns output; approach blend is fully released. */
-    pwm=FB_FuzzyController_Run(&c,130.0f,126.2f); /* error 3.8 C */
+    /*
+     * Precision-zone handoff must remain slew-limited while PV is still below SV.
+     * Regression for measured 3% boundary cliff (old behavior could drop >270 PWM).
+     */
+    p3=FB_FuzzyController_Run(&c,130.0f,126.2f); /* error 3.8 C */
     assert(c.state.BoostActive==false);
     assert(c.state.ApproachActive==false);
     assert(nearly_equal(c.state.ApproachBlend,0.0f));
+    assert(isfinite(p3));
+    assert(p3>=0.0f&&p3<=1000.0f);
+    assert(p3<=p2);
+    assert((p2-p3)<=30.01f);
+
+    /* Positive-error precision region keeps smooth downward handoff. */
+    pwm=FB_FuzzyController_Run(&c,130.0f,127.0f); /* error 3.0 C */
+    assert((p3-pwm)<=30.01f);
+
+    /* Once PV reaches/exceeds SV, braking is intentionally not constrained by approach slew. */
+    pwm=FB_FuzzyController_Run(&c,130.0f,130.1f); /* negative error */
     assert(isfinite(pwm));
     assert(pwm>=0.0f&&pwm<=1000.0f);
 
@@ -138,6 +152,6 @@ int main(void)
     pwm=FB_FuzzyController_Run(&c,130.0f,112.1f); /* error 17.9 */
     assert(c.state.BoostActive==false);
 
-    printf("C branch3 soft-landing regression PASS (FF130=%.3f)\n",ff130);
+    printf("C branch3 smooth precision handoff regression PASS (FF130=%.3f)\n",ff130);
     return 0;
 }
