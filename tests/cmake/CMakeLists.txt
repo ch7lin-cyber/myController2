@@ -28,6 +28,12 @@ target_link_libraries(test_identified_plant PRIVATE
 )
 add_test(NAME identified_plant_smoke COMMAND test_identified_plant)
 
+add_executable(test_fuzzy_self_tuner
+    test_fuzzy_self_tuner.c
+)
+target_link_libraries(test_fuzzy_self_tuner PRIVATE myController2::fuzzy_controller)
+add_test(NAME fuzzy_self_tuner COMMAND test_fuzzy_self_tuner)
+
 if(MYCONTROLLER_BUILD_PC_CONTROL)
     add_executable(test_fuzzy_pc_bridge
         test_fuzzy_pc_bridge.c
@@ -45,6 +51,7 @@ if(WIN32 AND MYCONTROLLER_BUILD_SHARED)
         fuzzy_cpp_api
         fuzzy_config_manager
         identified_plant_smoke
+        fuzzy_self_tuner
         PROPERTIES ENVIRONMENT "PATH=${_fuzzy_dll_path};$ENV{PATH}"
     )
 endif()
