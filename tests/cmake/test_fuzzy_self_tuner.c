@@ -12,26 +12,53 @@ static int nearly_equal(float a, float b, float eps)
     return d <= eps;
 }
 
+static FuzzyTunableParameters_t default_parameters(void)
+{
+    FuzzyTunableParameters_t p;
+    p.Ke = 0.050f;
+    p.Kde = 0.020f;
+    p.Ku = 1.000f;
+    p.ErrorWindow = 20.0f;
+    p.FullPowerErrorRatio = 0.050f;
+    p.PrecisionErrorRatio = 0.030f;
+    return p;
+}
+
+static FuzzyPerformanceMetrics_t good_metrics(void)
+{
+    FuzzyPerformanceMetrics_t m = {0};
+    m.StartSV = 25.0f;
+    m.TargetSV = 130.0f;
+    m.StartPV = 25.0f;
+    m.PeakPV = 130.5f;
+    m.ValleyPV = 25.0f;
+    m.Overshoot_c = 0.5f;
+    m.RiseTime_s = 8.0f;
+    m.SettlingTime_s = 15.0f;
+    m.SteadyStateError_c = 0.1f;
+    m.IAE = 100.0f;
+    m.ISE = 1000.0f;
+    m.PWMActivity = 300.0f;
+    m.MaxPVRate_c_per_s = 15.0f;
+    m.SampleCount = 100U;
+    m.ErrorZeroCrossCount = 2U;
+    m.RiseReached = true;
+    m.Settled = true;
+    m.Complete = true;
+    return m;
+}
+
 static void test_parameter_guard(void)
 {
     FB_FuzzyParameterGuard_t guard;
-    FuzzyTunableParameters_t current;
-    FuzzyTunableParameters_t requested;
+    FuzzyTunableParameters_t current = default_parameters();
+    FuzzyTunableParameters_t requested = current;
     FuzzyTunableParameters_t candidate;
     FuzzyTunableParameters_t rollback;
 
     FB_FuzzyParameterGuard_Init(&guard);
-
-    current.Ke = 0.050f;
-    current.Kde = 0.020f;
-    current.Ku = 1.000f;
-    current.ErrorWindow = 20.0f;
-    current.FullPowerErrorRatio = 0.050f;
-    current.PrecisionErrorRatio = 0.030f;
-
     FB_FuzzyParameterGuard_Accept(&guard, &current);
 
-    requested = current;
     requested.Ku = 0.500f;
     requested.Kde = 0.040f;
 
@@ -48,61 +75,67 @@ static void test_parameter_guard(void)
     assert(nearly_equal(rollback.Ku, current.Ku, 0.000001f));
 }
 
-static void test_self_tuner_direction(void)
+static void test_shadow_candidate_generation(void)
 {
     FB_FuzzySelfTuner_t tuner;
-    FuzzyPerformanceMetrics_t metrics;
-    FuzzyTunableParameters_t current;
+    FuzzyPerformanceMetrics_t metrics = good_metrics();
+    FuzzyTunableParameters_t current = default_parameters();
     FuzzyTunableParameters_t next;
     bool changed;
 
     FB_FuzzySelfTuner_Init(&tuner);
 
-    current.Ke = 0.050f;
-    current.Kde = 0.020f;
-    current.Ku = 1.000f;
-    current.ErrorWindow = 20.0f;
-    current.FullPowerErrorRatio = 0.050f;
-    current.PrecisionErrorRatio = 0.030f;
-
-    metrics.StartSV = 25.0f;
-    metrics.TargetSV = 130.0f;
-    metrics.StartPV = 25.0f;
-    metrics.PeakPV = 130.5f;
-    metrics.ValleyPV = 25.0f;
-    metrics.Overshoot_c = 0.5f;
-    metrics.Undershoot_c = 0.0f;
-    metrics.RiseTime_s = 8.0f;
-    metrics.SettlingTime_s = 15.0f;
-    metrics.SteadyStateError_c = 0.1f;
-    metrics.IAE = 100.0f;
-    metrics.ISE = 1000.0f;
-    metrics.PWMActivity = 300.0f;
-    metrics.MaxPVRate_c_per_s = 15.0f;
-    metrics.SampleCount = 100U;
-    metrics.ErrorZeroCrossCount = 2U;
-    metrics.RiseReached = true;
-    metrics.Settled = true;
-    metrics.Complete = true;
-
+    /* Episode 1 establishes the accepted baseline only. */
     changed = FB_FuzzySelfTuner_EvaluateEpisode(
         &tuner, &metrics, &current, &next);
     assert(!changed);
     assert(tuner.Status.HasBaseline);
+    assert(!tuner.Status.CandidatePending);
 
+    /* Episode 2 is deliberately poor. Shadow mode only inspects next. */
     metrics.Overshoot_c = 3.0f;
-    metrics.RiseTime_s = 8.0f;
     metrics.SettlingTime_s = 18.0f;
     metrics.IAE = 120.0f;
 
     changed = FB_FuzzySelfTuner_EvaluateEpisode(
         &tuner, &metrics, &current, &next);
     assert(changed);
+    assert(tuner.Status.CandidatePending);
     assert(next.Ku < current.Ku);
     assert(next.Kde > current.Kde);
     assert(next.FullPowerErrorRatio < current.FullPowerErrorRatio);
     assert(next.PrecisionErrorRatio > current.PrecisionErrorRatio);
-    assert(tuner.Status.CandidatePending);
+
+    /* Critical Shadow-Mode property: active parameters remain untouched. */
+    assert(nearly_equal(current.Ke, 0.050f, 0.000001f));
+    assert(nearly_equal(current.Kde, 0.020f, 0.000001f));
+    assert(nearly_equal(current.Ku, 1.000f, 0.000001f));
+}
+
+static void test_candidate_rollback(void)
+{
+    FB_FuzzySelfTuner_t tuner;
+    FuzzyPerformanceMetrics_t metrics = good_metrics();
+    FuzzyTunableParameters_t current = default_parameters();
+    FuzzyTunableParameters_t candidate;
+    FuzzyTunableParameters_t rollback;
+
+    FB_FuzzySelfTuner_Init(&tuner);
+    assert(!FB_FuzzySelfTuner_EvaluateEpisode(&tuner, &metrics, &current, &candidate));
+
+    metrics.Overshoot_c = 3.0f;
+    metrics.IAE = 120.0f;
+    assert(FB_FuzzySelfTuner_EvaluateEpisode(&tuner, &metrics, &current, &candidate));
+
+    /* Simulate applying candidate for verification, then getting a worse result. */
+    metrics.Overshoot_c = 5.0f;
+    metrics.SettlingTime_s = 25.0f;
+    metrics.IAE = 180.0f;
+    assert(FB_FuzzySelfTuner_EvaluateEpisode(&tuner, &metrics, &candidate, &rollback));
+    assert(tuner.Status.State == FUZZY_TUNER_ROLLBACK);
+    assert(nearly_equal(rollback.Ke, current.Ke, 0.000001f));
+    assert(nearly_equal(rollback.Ku, current.Ku, 0.000001f));
+    assert(tuner.Status.RollbackCount == 1U);
 }
 
 static void test_performance_monitor(void)
@@ -139,7 +172,8 @@ static void test_performance_monitor(void)
 int main(void)
 {
     test_parameter_guard();
-    test_self_tuner_direction();
+    test_shadow_candidate_generation();
+    test_candidate_rollback();
     test_performance_monitor();
     return 0;
 }
