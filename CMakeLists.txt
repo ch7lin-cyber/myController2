@@ -29,6 +29,9 @@ set(FUZZY_CONTROLLER_SOURCES
     FuzzyController_src/FB_FuzzyHybridOutput.c
     FuzzyController_src/FB_FuzzyDefuzzifier.c
     FuzzyController_src/FB_FuzzyConfigManager.c
+    FuzzyController_src/FB_FuzzyPerformanceMonitor.c
+    FuzzyController_src/FB_FuzzyParameterGuard.c
+    FuzzyController_src/FB_FuzzySelfTuner.c
 )
 
 if(MYCONTROLLER_BUILD_SHARED)
