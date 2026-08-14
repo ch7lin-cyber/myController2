@@ -49,7 +49,6 @@ static void test_default_shadow_mode_blocks_apply(void)
     FB_FuzzySelfTuningBridge_Init(&bridge);
 
     assert(bridge.Config.ShadowMode);
-
     prepare_candidate(&bridge, &controller);
 
     oldKuTrim = controller.scaling.Config.SelfTuneKuTrim;
@@ -170,7 +169,7 @@ static void test_scaling_trim_persists_through_auto_calculation(void)
     assert(nearly_equal(scaling.Config.SelfTuneKuTrim, 0.90f, 0.000001f));
 }
 
-static void test_suggested_candidate_survives_episode_start(void)
+static void test_pending_candidate_freezes_new_learning(void)
 {
     FB_FuzzyController_t controller;
     FB_FuzzySelfTuningBridge_t bridge;
@@ -180,9 +179,13 @@ static void test_suggested_candidate_survives_episode_start(void)
     prepare_candidate(&bridge, &controller);
     mark_candidate_as_tuner_suggestion(&bridge);
 
-    assert(FB_FuzzySelfTuningBridge_StartEpisode(
+    assert(!FB_FuzzySelfTuningBridge_StartEpisode(
         &bridge, &controller, 130.0f, 25.0f, 1000.0f));
 
+    FB_FuzzySelfTuningBridge_Run(
+        &bridge, &controller, 130.0f, 25.0f, 1000.0f);
+
+    assert(!bridge.Status.EpisodeActive);
     assert(bridge.Status.CandidateAvailable);
     assert(!bridge.Status.CandidateApplied);
     assert(bridge.Tuner.Status.CandidatePending);
@@ -209,39 +212,25 @@ static void test_reject_candidate_is_not_rollback(void)
     assert(bridge.Tuner.Status.RollbackCount == rollbackCount);
 }
 
-static void test_unapplied_candidate_is_not_verified(void)
+static void test_monitor_syncs_to_controller(void)
 {
     FB_FuzzyController_t controller;
     FB_FuzzySelfTuningBridge_t bridge;
-    FuzzyPerformanceMonitorConfig_t monitorConfig;
-    uint32_t rollbackCount;
 
     FB_FuzzyController_Init(&controller);
     FB_FuzzySelfTuningBridge_Init(&bridge);
-    prepare_candidate(&bridge, &controller);
-    mark_candidate_as_tuner_suggestion(&bridge);
-    rollbackCount = bridge.Tuner.Status.RollbackCount;
 
-    monitorConfig = bridge.Monitor.Config;
-    monitorConfig.Ts = 0.1f;
-    monitorConfig.MinEpisode_s = 0.0f;
-    monitorConfig.MaxEpisode_s = 0.3f;
-    monitorConfig.SettlingBand_c = 1.0f;
-    monitorConfig.SettlingHold_s = 0.0f;
-    assert(FB_FuzzyPerformanceMonitor_SetConfig(&bridge.Monitor, &monitorConfig));
+    assert(FB_FuzzyController_SetSampleTime(&controller, 50U));
+    bridge.Config.SVChangeThreshold_c = 2.5f;
 
     assert(FB_FuzzySelfTuningBridge_StartEpisode(
-        &bridge, &controller, 100.0f, 99.5f, 500.0f));
+        &bridge, &controller, 120.0f, 25.0f, 900.0f));
 
-    FB_FuzzySelfTuningBridge_Run(&bridge, &controller, 100.0f, 99.6f, 500.0f);
-
-    assert(!bridge.Status.EpisodeActive);
-    assert(bridge.Status.CandidateAvailable);
-    assert(!bridge.Status.CandidateApplied);
-    assert(!bridge.Status.RollbackRecommended);
-    assert(bridge.Tuner.Status.CandidatePending);
-    assert(bridge.Tuner.Status.State == FUZZY_TUNER_VERIFY);
-    assert(bridge.Tuner.Status.RollbackCount == rollbackCount);
+    assert(nearly_equal(bridge.Monitor.Config.Ts, 0.050f, 0.000001f));
+    assert(nearly_equal(
+        bridge.Monitor.Config.SvChangeThreshold_c,
+        2.5f,
+        0.000001f));
 }
 
 static void test_rollback_recommendation_requires_explicit_rollback(void)
@@ -289,9 +278,9 @@ int main(void)
     test_manual_scaling_blocks_trim_apply();
     test_apply_rollback_restores_exact_config();
     test_scaling_trim_persists_through_auto_calculation();
-    test_suggested_candidate_survives_episode_start();
+    test_pending_candidate_freezes_new_learning();
     test_reject_candidate_is_not_rollback();
-    test_unapplied_candidate_is_not_verified();
+    test_monitor_syncs_to_controller();
     test_rollback_recommendation_requires_explicit_rollback();
     return 0;
 }
