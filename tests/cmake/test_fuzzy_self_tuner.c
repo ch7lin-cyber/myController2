@@ -85,14 +85,12 @@ static void test_shadow_candidate_generation(void)
 
     FB_FuzzySelfTuner_Init(&tuner);
 
-    /* Episode 1 establishes the accepted baseline only. */
     changed = FB_FuzzySelfTuner_EvaluateEpisode(
         &tuner, &metrics, &current, &next);
     assert(!changed);
     assert(tuner.Status.HasBaseline);
     assert(!tuner.Status.CandidatePending);
 
-    /* Episode 2 is deliberately poor. Shadow mode only inspects next. */
     metrics.Overshoot_c = 3.0f;
     metrics.SettlingTime_s = 18.0f;
     metrics.IAE = 120.0f;
@@ -106,7 +104,6 @@ static void test_shadow_candidate_generation(void)
     assert(next.FullPowerErrorRatio < current.FullPowerErrorRatio);
     assert(next.PrecisionErrorRatio > current.PrecisionErrorRatio);
 
-    /* Critical Shadow-Mode property: active parameters remain untouched. */
     assert(nearly_equal(current.Ke, 0.050f, 0.000001f));
     assert(nearly_equal(current.Kde, 0.020f, 0.000001f));
     assert(nearly_equal(current.Ku, 1.000f, 0.000001f));
@@ -127,7 +124,6 @@ static void test_candidate_rollback(void)
     metrics.IAE = 120.0f;
     assert(FB_FuzzySelfTuner_EvaluateEpisode(&tuner, &metrics, &current, &candidate));
 
-    /* Simulate applying candidate for verification, then getting a worse result. */
     metrics.Overshoot_c = 5.0f;
     metrics.SettlingTime_s = 25.0f;
     metrics.IAE = 180.0f;
@@ -136,6 +132,68 @@ static void test_candidate_rollback(void)
     assert(nearly_equal(rollback.Ke, current.Ke, 0.000001f));
     assert(nearly_equal(rollback.Ku, current.Ku, 0.000001f));
     assert(tuner.Status.RollbackCount == 1U);
+}
+
+static void test_cost_normalizes_step_and_pwm_activity(void)
+{
+    FB_FuzzySelfTuner_t tuner;
+    FuzzyPerformanceMetrics_t largeStep = good_metrics();
+    FuzzyPerformanceMetrics_t smallStep = largeStep;
+    float costLarge;
+    float costSmall;
+
+    FB_FuzzySelfTuner_Init(&tuner);
+
+    largeStep.StartPV = 30.0f;
+    largeStep.TargetSV = 130.0f; /* 100 C step */
+    largeStep.IAE = 100.0f;
+    largeStep.PWMActivity = 300.0f;
+    largeStep.SampleCount = 100U;
+
+    smallStep.StartPV = 80.0f;
+    smallStep.TargetSV = 130.0f; /* 50 C step */
+    smallStep.IAE = 50.0f;       /* same IAE per degree */
+    smallStep.PWMActivity = 150.0f;
+    smallStep.SampleCount = 50U; /* same PWM activity per sample */
+
+    costLarge = FB_FuzzySelfTuner_CalculateCost(&tuner, &largeStep);
+    costSmall = FB_FuzzySelfTuner_CalculateCost(&tuner, &smallStep);
+
+    assert(nearly_equal(costLarge, costSmall, 0.00001f));
+}
+
+static void test_incomparable_verification_is_deferred(void)
+{
+    FB_FuzzySelfTuner_t tuner;
+    FuzzyPerformanceMetrics_t metrics = good_metrics();
+    FuzzyPerformanceMetrics_t differentRegion;
+    FuzzyTunableParameters_t current = default_parameters();
+    FuzzyTunableParameters_t candidate;
+    FuzzyTunableParameters_t next;
+    uint32_t rollbackCount;
+
+    FB_FuzzySelfTuner_Init(&tuner);
+
+    assert(!FB_FuzzySelfTuner_EvaluateEpisode(&tuner, &metrics, &current, &next));
+    assert(nearly_equal(tuner.BaselineTargetSV_c, 130.0f, 0.000001f));
+
+    metrics.Overshoot_c = 3.0f;
+    assert(FB_FuzzySelfTuner_EvaluateEpisode(&tuner, &metrics, &current, &candidate));
+    assert(tuner.Status.CandidatePending);
+
+    rollbackCount = tuner.Status.RollbackCount;
+    differentRegion = metrics;
+    differentRegion.TargetSV = 200.0f;
+    differentRegion.StartPV = 25.0f;
+    differentRegion.Overshoot_c = 10.0f;
+    differentRegion.IAE = 500.0f;
+
+    assert(!FB_FuzzySelfTuner_EvaluateEpisode(
+        &tuner, &differentRegion, &candidate, &next));
+    assert(tuner.Status.CandidatePending);
+    assert(tuner.Status.VerificationDeferred);
+    assert(tuner.Status.State == FUZZY_TUNER_VERIFY);
+    assert(tuner.Status.RollbackCount == rollbackCount);
 }
 
 static void test_performance_monitor(void)
@@ -183,7 +241,6 @@ static void test_sv_change_restarts_active_episode(void)
     assert(monitor.Metrics.SampleCount == 1U);
     assert(nearly_equal(monitor.Metrics.TargetSV, 100.0f, 0.000001f));
 
-    /* New setpoint invalidates the previous response and starts a fresh episode. */
     FB_FuzzyPerformanceMonitor_Run(&monitor, 120.0f, 92.5f, 800.0f);
 
     assert(monitor.EpisodeActive);
@@ -198,6 +255,8 @@ int main(void)
     test_parameter_guard();
     test_shadow_candidate_generation();
     test_candidate_rollback();
+    test_cost_normalizes_step_and_pwm_activity();
+    test_incomparable_verification_is_deferred();
     test_performance_monitor();
     test_sv_change_restarts_active_episode();
     return 0;
