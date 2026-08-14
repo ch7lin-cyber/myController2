@@ -9,6 +9,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "FB_FuzzyController.h"
+#include "FB_FuzzySelfTuningBridge.h"
 
 /* Hardware/application interfaces supplied by the target platform. */
 extern float Temperature_GetC(void);
@@ -19,6 +20,7 @@ extern void delay_ms(uint32_t ms);
 #define CONTROLLER_PERIOD_MS     (20U)
 
 static FB_FuzzyController_t HeaterFuzzy;
+static FB_FuzzySelfTuningBridge_t HeaterSelfTuning;
 
 int main(void)
 {
@@ -30,6 +32,15 @@ int main(void)
     /* TemperatureSensor_Init(); */
 
     FB_FuzzyController_Init(&HeaterFuzzy);
+    FB_FuzzySelfTuningBridge_Init(&HeaterSelfTuning);
+
+    /*
+     * IMPORTANT:
+     * ShadowMode is TRUE by default. The self tuner observes response quality
+     * and may generate a Candidate, but Run() never changes control parameters.
+     * A separate application/HMI/service decision must explicitly disable
+     * ShadowMode and call ApplyCandidate() before any learned trim is written.
+     */
 
     PWM_SetDuty(0U);
 
@@ -54,7 +65,38 @@ int main(void)
             pwm = 1000.0f;
         }
 
+        /*
+         * Observe the exact command that will be sent to the plant.
+         * This call is deliberately after FB_FuzzyController_Run() and before
+         * PWM_SetDuty(). It only measures performance and prepares candidates.
+         * It never applies or rolls back controller parameters automatically.
+         */
+        FB_FuzzySelfTuningBridge_Run(
+            &HeaterSelfTuning,
+            &HeaterFuzzy,
+            HEATER_SV_C,
+            temperature,
+            pwm);
+
         PWM_SetDuty((uint16_t)(pwm + 0.5f));
+
+        /*
+         * Example application decision path (NOT automatic):
+         *
+         * if (HeaterSelfTuning.Status.CandidateAvailable)
+         * {
+         *     // Show candidate/metrics on HMI or log them first.
+         *     // Only an explicit service/application decision may do this:
+         *     // FB_FuzzySelfTuningBridge_SetShadowMode(&HeaterSelfTuning, false);
+         *     // FB_FuzzySelfTuningBridge_ApplyCandidate(&HeaterSelfTuning, &HeaterFuzzy);
+         * }
+         *
+         * if (HeaterSelfTuning.Status.RollbackRecommended)
+         * {
+         *     // Explicit decision only; no automatic physical rollback:
+         *     // FB_FuzzySelfTuningBridge_Rollback(&HeaterSelfTuning, &HeaterFuzzy);
+         * }
+         */
 
         /*
          * Prototype timing only.
