@@ -182,6 +182,20 @@ bool FB_FuzzySelfTuner_Rollback(
     return true;
 }
 
+void FB_FuzzySelfTuner_CancelCandidate(FB_FuzzySelfTuner_t *fb)
+{
+    if (fb == (FB_FuzzySelfTuner_t *)0)
+    {
+        return;
+    }
+
+    fb->Status.CandidatePending = false;
+    fb->Status.CandidateCost = 0.0f;
+    fb->Candidate = fb->Baseline;
+    fb->Guard.HasCandidate = false;
+    fb->Status.State = fb->Config.Enable ? FUZZY_TUNER_IDLE : FUZZY_TUNER_DISABLED;
+}
+
 bool FB_FuzzySelfTuner_EvaluateEpisode(
     FB_FuzzySelfTuner_t *fb,
     const FuzzyPerformanceMetrics_t *metrics,
