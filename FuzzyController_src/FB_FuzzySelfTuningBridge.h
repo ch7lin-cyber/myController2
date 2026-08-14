@@ -33,6 +33,7 @@ typedef struct
     bool EpisodeActive;
     bool CandidateAvailable;
     bool CandidateApplied;
+    bool ApplyBlockedByAutoScaling;
     uint32_t EpisodeCount;
     FuzzyTunableParameters_t Current;
     FuzzyTunableParameters_t Candidate;
@@ -83,7 +84,12 @@ MY_API const FuzzyPerformanceMetrics_t *FB_FuzzySelfTuningBridge_GetMetrics(
 MY_API const FuzzySelfTunerStatus_t *FB_FuzzySelfTuningBridge_GetTunerStatus(
     const FB_FuzzySelfTuningBridge_t *fb);
 
-/* Explicit write API. Never called automatically by Run(). */
+/*
+ * Explicit write API. Never called automatically by Run().
+ * It is rejected while ShadowMode is enabled.
+ * It is also rejected while Adaptive/Auto Scaling owns Ke/Kde/Ku because those
+ * targets would otherwise be recalculated on the next controller cycle.
+ */
 MY_API bool FB_FuzzySelfTuningBridge_ApplyCandidate(
     FB_FuzzySelfTuningBridge_t *fb,
     FB_FuzzyController_t *controller);
