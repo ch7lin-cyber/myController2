@@ -33,6 +33,7 @@ typedef struct
     bool EpisodeActive;
     bool CandidateAvailable;
     bool CandidateApplied;
+    bool RollbackRecommended;
     bool ApplyBlockedByScalingMode;
     uint32_t EpisodeCount;
     FuzzyTunableParameters_t Current;
@@ -91,6 +92,10 @@ MY_API const FuzzyPerformanceMetrics_t *FB_FuzzySelfTuningBridge_GetMetrics(
 MY_API const FuzzySelfTunerStatus_t *FB_FuzzySelfTuningBridge_GetTunerStatus(
     const FB_FuzzySelfTuningBridge_t *fb);
 
+/* Reject a suggested candidate that has not been applied. */
+MY_API bool FB_FuzzySelfTuningBridge_RejectCandidate(
+    FB_FuzzySelfTuningBridge_t *fb);
+
 /*
  * Explicit write API. Never called automatically by Run().
  * ShadowMode must first be disabled by the application.
@@ -102,6 +107,7 @@ MY_API bool FB_FuzzySelfTuningBridge_ApplyCandidate(
     FB_FuzzySelfTuningBridge_t *fb,
     FB_FuzzyController_t *controller);
 
+/* Explicit physical rollback. Never executed automatically after verification. */
 MY_API bool FB_FuzzySelfTuningBridge_Rollback(
     FB_FuzzySelfTuningBridge_t *fb,
     FB_FuzzyController_t *controller);
