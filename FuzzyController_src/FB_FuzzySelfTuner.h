@@ -89,6 +89,9 @@ MY_API bool FB_FuzzySelfTuner_Rollback(
     FB_FuzzySelfTuner_t *fb,
     FuzzyTunableParameters_t *parameters);
 
+/* Cancel a suggested candidate that was never applied. No rollback is counted. */
+MY_API void FB_FuzzySelfTuner_CancelCandidate(FB_FuzzySelfTuner_t *fb);
+
 #ifdef __cplusplus
 }
 #endif
