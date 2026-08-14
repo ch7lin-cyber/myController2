@@ -1,6 +1,6 @@
 /******************************************************************************
  * File    : FB_FuzzyScaling.c
- * Version : V2.2
+ * Version : V2.3
  *
  * Brief   : Auto / Adaptive Scaling Engine
  *
@@ -10,6 +10,7 @@
  *   - Reject invalid public calculation inputs.
  *   - Preserve the last valid state when an input sample is invalid.
  *   - Error window adaptation is applied to the runtime state.
+ *   - Persistent slow self-tuning trims are layered on top of fast scaling.
  ******************************************************************************/
 
 #include "FB_FuzzyScaling.h"
@@ -50,6 +51,13 @@ static float FuzzyScaling_Clamp(float value, float minValue, float maxValue)
     return value;
 }
 
+static bool FuzzyScaling_ValidTrim(float trim)
+{
+    return FuzzyScaling_IsFinite(trim) &&
+           (trim >= FUZZY_SCALING_SELF_TUNE_TRIM_MIN) &&
+           (trim <= FUZZY_SCALING_SELF_TUNE_TRIM_MAX);
+}
+
 void FB_FuzzyScaling_Init(FB_FuzzyScaling_t *fb)
 {
     if (fb == NULL) return;
@@ -69,6 +77,10 @@ void FB_FuzzyScaling_Init(FB_FuzzyScaling_t *fb)
     fb->Config.DynamicGain = FUZZY_SCALING_DEFAULT_DYNAMIC_GAIN;
     fb->Config.MaxPVRate = FUZZY_SCALING_DEFAULT_MAX_PV_RATE;
     fb->Config.KuSlewRate = FUZZY_SCALING_DEFAULT_KU_SLEW_RATE;
+    fb->Config.SelfTuneKeTrim = FUZZY_SCALING_SELF_TUNE_TRIM_DEFAULT;
+    fb->Config.SelfTuneKdeTrim = FUZZY_SCALING_SELF_TUNE_TRIM_DEFAULT;
+    fb->Config.SelfTuneKuTrim = FUZZY_SCALING_SELF_TUNE_TRIM_DEFAULT;
+    fb->Config.SelfTuneErrorWindowTrim = FUZZY_SCALING_SELF_TUNE_TRIM_DEFAULT;
     fb->Config.AutoScalingEnable = true;
     fb->Config.AdaptiveEnable = true;
 
@@ -141,6 +153,8 @@ float FB_FuzzyScaling_CalculateErrorWindow(FB_FuzzyScaling_t *fb, float sv, floa
             fb->Config.BaseErrorWindow);
     }
 
+    window *= fb->Config.SelfTuneErrorWindowTrim;
+
     window = FuzzyScaling_Clamp(
         window,
         fb->Config.MinErrorWindow,
@@ -209,6 +223,8 @@ float FB_FuzzyScaling_CalculateKe(FB_FuzzyScaling_t *fb)
         ke *= fb->State.DynamicFactor;
     }
 
+    ke *= fb->Config.SelfTuneKeTrim;
+
     if (!FuzzyScaling_IsFinite(ke)) ke = fb->Config.MinKe;
 
     ke = FuzzyScaling_Clamp(ke, fb->Config.MinKe, fb->Config.MaxKe);
@@ -238,6 +254,8 @@ float FB_FuzzyScaling_CalculateKde(FB_FuzzyScaling_t *fb)
         kde *= fb->State.DynamicFactor;
     }
 
+    kde *= fb->Config.SelfTuneKdeTrim;
+
     if (!FuzzyScaling_IsFinite(kde)) kde = fb->Config.MinKde;
 
     kde = FuzzyScaling_Clamp(kde, fb->Config.MinKde, fb->Config.MaxKde);
@@ -257,6 +275,8 @@ float FB_FuzzyScaling_CalculateKu(FB_FuzzyScaling_t *fb)
     {
         ku *= fb->State.DynamicFactor;
     }
+
+    ku *= fb->Config.SelfTuneKuTrim;
 
     if (!FuzzyScaling_IsFinite(ku)) ku = fb->Config.MinKu;
 
@@ -475,6 +495,14 @@ bool FB_FuzzyScaling_SetConfig(
     if (!FuzzyScaling_IsFinite(config->MaxPVRate) || config->MaxPVRate <= 0.0f) return false;
     if (!FuzzyScaling_IsFinite(config->KuSlewRate) || config->KuSlewRate <= 0.0f) return false;
 
+    if (!FuzzyScaling_ValidTrim(config->SelfTuneKeTrim) ||
+        !FuzzyScaling_ValidTrim(config->SelfTuneKdeTrim) ||
+        !FuzzyScaling_ValidTrim(config->SelfTuneKuTrim) ||
+        !FuzzyScaling_ValidTrim(config->SelfTuneErrorWindowTrim))
+    {
+        return false;
+    }
+
     fb->Config = *config;
 
     fb->State.ErrorWindow = FuzzyScaling_Clamp(
@@ -542,6 +570,40 @@ bool FB_FuzzyScaling_SetErrorWindow(FB_FuzzyScaling_t *fb, float window)
     fb->State.TargetErrorWindow = window;
     fb->State.ErrorWindow = window;
     return true;
+}
+
+bool FB_FuzzyScaling_SetSelfTuneTrim(
+    FB_FuzzyScaling_t *fb,
+    float keTrim,
+    float kdeTrim,
+    float kuTrim,
+    float errorWindowTrim)
+{
+    if (fb == NULL) return false;
+
+    if (!FuzzyScaling_ValidTrim(keTrim) ||
+        !FuzzyScaling_ValidTrim(kdeTrim) ||
+        !FuzzyScaling_ValidTrim(kuTrim) ||
+        !FuzzyScaling_ValidTrim(errorWindowTrim))
+    {
+        return false;
+    }
+
+    fb->Config.SelfTuneKeTrim = keTrim;
+    fb->Config.SelfTuneKdeTrim = kdeTrim;
+    fb->Config.SelfTuneKuTrim = kuTrim;
+    fb->Config.SelfTuneErrorWindowTrim = errorWindowTrim;
+    return true;
+}
+
+void FB_FuzzyScaling_ResetSelfTuneTrim(FB_FuzzyScaling_t *fb)
+{
+    if (fb == NULL) return;
+
+    fb->Config.SelfTuneKeTrim = FUZZY_SCALING_SELF_TUNE_TRIM_DEFAULT;
+    fb->Config.SelfTuneKdeTrim = FUZZY_SCALING_SELF_TUNE_TRIM_DEFAULT;
+    fb->Config.SelfTuneKuTrim = FUZZY_SCALING_SELF_TUNE_TRIM_DEFAULT;
+    fb->Config.SelfTuneErrorWindowTrim = FUZZY_SCALING_SELF_TUNE_TRIM_DEFAULT;
 }
 
 void FB_FuzzyScaling_EnableAuto(FB_FuzzyScaling_t *fb)
