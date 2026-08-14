@@ -46,6 +46,15 @@ typedef struct
     float DampingStepUp;
     float ApproachStep;
     float MinimumImprovement;
+
+    /*
+     * Candidate verification must use a sufficiently similar response episode.
+     * This avoids comparing, for example, a 25->175 C heat-up against a
+     * 120->130 C step as if their raw performance costs were equivalent.
+     */
+    float VerificationTargetTolerance_c;
+    float VerificationStepRatioTolerance;
+    float MinimumStepMagnitude_c;
 } FuzzySelfTunerConfig_t;
 
 typedef struct
@@ -55,6 +64,7 @@ typedef struct
     float CandidateCost;
     bool HasBaseline;
     bool CandidatePending;
+    bool VerificationDeferred;
     uint32_t AcceptedCount;
     uint32_t RollbackCount;
 } FuzzySelfTunerStatus_t;
@@ -66,6 +76,10 @@ typedef struct
     FB_FuzzyParameterGuard_t Guard;
     FuzzyTunableParameters_t Baseline;
     FuzzyTunableParameters_t Candidate;
+
+    /* Operating context of the accepted baseline episode. */
+    float BaselineTargetSV_c;
+    float BaselineStepMagnitude_c;
 } FB_FuzzySelfTuner_t;
 
 MY_API void FB_FuzzySelfTuner_Init(FB_FuzzySelfTuner_t *fb);
@@ -74,6 +88,9 @@ MY_API bool FB_FuzzySelfTuner_SetConfig(
     FB_FuzzySelfTuner_t *fb,
     const FuzzySelfTunerConfig_t *config);
 MY_API float FB_FuzzySelfTuner_CalculateCost(
+    const FB_FuzzySelfTuner_t *fb,
+    const FuzzyPerformanceMetrics_t *metrics);
+MY_API bool FB_FuzzySelfTuner_IsComparableEpisode(
     const FB_FuzzySelfTuner_t *fb,
     const FuzzyPerformanceMetrics_t *metrics);
 MY_API bool FB_FuzzySelfTuner_EvaluateEpisode(
