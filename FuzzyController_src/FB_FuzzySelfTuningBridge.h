@@ -33,7 +33,7 @@ typedef struct
     bool EpisodeActive;
     bool CandidateAvailable;
     bool CandidateApplied;
-    bool ApplyBlockedByAutoScaling;
+    bool ApplyBlockedByScalingMode;
     uint32_t EpisodeCount;
     FuzzyTunableParameters_t Current;
     FuzzyTunableParameters_t Candidate;
@@ -45,6 +45,13 @@ typedef struct
     FuzzySelfTuningBridgeStatus_t Status;
     FB_FuzzyPerformanceMonitor_t Monitor;
     FB_FuzzySelfTuner_t Tuner;
+
+    /* Exact rollback snapshot captured only when a candidate is explicitly applied. */
+    FuzzyScalingConfig_t AppliedScalingConfigBackup;
+    float AppliedFullPowerErrorRatioBackup;
+    float AppliedPrecisionErrorRatioBackup;
+    bool HasApplyBackup;
+
     float PreviousSV;
     bool Initialized;
 } FB_FuzzySelfTuningBridge_t;
@@ -86,9 +93,10 @@ MY_API const FuzzySelfTunerStatus_t *FB_FuzzySelfTuningBridge_GetTunerStatus(
 
 /*
  * Explicit write API. Never called automatically by Run().
- * It is rejected while ShadowMode is enabled.
- * It is also rejected while Adaptive/Auto Scaling owns Ke/Kde/Ku because those
- * targets would otherwise be recalculated on the next controller cycle.
+ * ShadowMode must first be disabled by the application.
+ * In the normal branch4 architecture Auto Scaling remains enabled: the candidate
+ * is converted to persistent slow trim multipliers instead of overwriting the
+ * fast adaptive targets directly.
  */
 MY_API bool FB_FuzzySelfTuningBridge_ApplyCandidate(
     FB_FuzzySelfTuningBridge_t *fb,
