@@ -6,6 +6,7 @@ on:
       - main
       - branch2
       - branch3_variableAdjust
+      - branch4_selfTuning
   pull_request:
     branches:
       - main
