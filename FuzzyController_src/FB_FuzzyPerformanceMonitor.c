@@ -179,6 +179,17 @@ void FB_FuzzyPerformanceMonitor_Run(
         return;
     }
 
+    /*
+     * A second SV change invalidates the current response episode. Restart from
+     * the new operating point instead of mixing two setpoint responses into one
+     * set of metrics.
+     */
+    if (absf_local(sv - fb->Metrics.TargetSV) >= fb->Config.SvChangeThreshold_c)
+    {
+        FB_FuzzyPerformanceMonitor_StartEpisode(fb, sv, pv, pwm);
+        return;
+    }
+
     error = sv - pv;
     fb->EpisodeTime_s += fb->Config.Ts;
     fb->Metrics.SampleCount++;
