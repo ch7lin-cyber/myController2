@@ -161,7 +161,14 @@ bool FB_FuzzySelfTuningBridge_StartEpisode(
         FB_FuzzySelfTuningBridge_Init(fb);
     }
 
-    if (!fb->Config.Enable || fb->Status.RollbackRecommended)
+    /*
+     * Freeze learning while an explicit application decision is pending.
+     * This preserves the exact controller snapshot that the candidate was
+     * generated from and prevents Auto Scaling drift from changing its anchor.
+     */
+    if (!fb->Config.Enable ||
+        fb->Status.RollbackRecommended ||
+        (fb->Status.CandidateAvailable && !fb->Status.CandidateApplied))
     {
         return false;
     }
@@ -170,6 +177,10 @@ bool FB_FuzzySelfTuningBridge_StartEpisode(
     {
         return false;
     }
+
+    /* Keep episode timing and SV-change detection aligned with the controller. */
+    fb->Monitor.Config.Ts = controller->config.Ts;
+    fb->Monitor.Config.SvChangeThreshold_c = fb->Config.SVChangeThreshold_c;
 
     FB_FuzzyPerformanceMonitor_StartEpisode(&fb->Monitor, sv, pv, pwm);
     fb->Status.EpisodeActive = true;
@@ -207,6 +218,13 @@ void FB_FuzzySelfTuningBridge_Run(
         return;
     }
 
+    /* A suggested, unapplied candidate freezes new learning until Apply/Reject. */
+    if (fb->Status.CandidateAvailable && !fb->Status.CandidateApplied)
+    {
+        fb->PreviousSV = sv;
+        return;
+    }
+
     if ((!fb->Status.EpisodeActive) &&
         fb->Config.AutoStartOnSVChange &&
         (absf_local(sv - fb->PreviousSV) >= fb->Config.SVChangeThreshold_c))
@@ -237,16 +255,6 @@ void FB_FuzzySelfTuningBridge_Run(
     }
 
     fb->Status.Current = current;
-
-    /*
-     * A suggested candidate that has not been applied must remain a suggestion.
-     * Do not let another baseline episode masquerade as candidate verification.
-     */
-    if (fb->Status.CandidateAvailable && !fb->Status.CandidateApplied)
-    {
-        return;
-    }
-
     nextParameters = current;
     wasCandidatePending = fb->Tuner.Status.CandidatePending;
 
