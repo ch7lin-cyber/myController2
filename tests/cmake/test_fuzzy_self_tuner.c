@@ -169,11 +169,36 @@ static void test_performance_monitor(void)
     assert(m->ISE >= 0.0f);
 }
 
+static void test_sv_change_restarts_active_episode(void)
+{
+    FB_FuzzyPerformanceMonitor_t monitor;
+
+    FB_FuzzyPerformanceMonitor_Init(&monitor);
+    monitor.Config.Ts = 0.1f;
+    monitor.Config.SvChangeThreshold_c = 1.0f;
+
+    FB_FuzzyPerformanceMonitor_StartEpisode(&monitor, 100.0f, 90.0f, 700.0f);
+    FB_FuzzyPerformanceMonitor_Run(&monitor, 100.0f, 92.0f, 650.0f);
+
+    assert(monitor.Metrics.SampleCount == 1U);
+    assert(nearly_equal(monitor.Metrics.TargetSV, 100.0f, 0.000001f));
+
+    /* New setpoint invalidates the previous response and starts a fresh episode. */
+    FB_FuzzyPerformanceMonitor_Run(&monitor, 120.0f, 92.5f, 800.0f);
+
+    assert(monitor.EpisodeActive);
+    assert(!monitor.Metrics.Complete);
+    assert(monitor.Metrics.SampleCount == 0U);
+    assert(nearly_equal(monitor.Metrics.TargetSV, 120.0f, 0.000001f));
+    assert(nearly_equal(monitor.Metrics.StartPV, 92.5f, 0.000001f));
+}
+
 int main(void)
 {
     test_parameter_guard();
     test_shadow_candidate_generation();
     test_candidate_rollback();
     test_performance_monitor();
+    test_sv_change_restarts_active_episode();
     return 0;
 }
