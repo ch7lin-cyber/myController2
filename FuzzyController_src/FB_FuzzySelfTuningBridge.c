@@ -75,6 +75,7 @@ void FB_FuzzySelfTuningBridge_Init(FB_FuzzySelfTuningBridge_t *fb)
     fb->Status.EpisodeActive = false;
     fb->Status.CandidateAvailable = false;
     fb->Status.CandidateApplied = false;
+    fb->Status.RollbackRecommended = false;
     fb->Status.ApplyBlockedByScalingMode = false;
     fb->Status.EpisodeCount = 0U;
 
@@ -160,7 +161,7 @@ bool FB_FuzzySelfTuningBridge_StartEpisode(
         FB_FuzzySelfTuningBridge_Init(fb);
     }
 
-    if (!fb->Config.Enable)
+    if (!fb->Config.Enable || fb->Status.RollbackRecommended)
     {
         return false;
     }
@@ -172,8 +173,6 @@ bool FB_FuzzySelfTuningBridge_StartEpisode(
 
     FB_FuzzyPerformanceMonitor_StartEpisode(&fb->Monitor, sv, pv, pwm);
     fb->Status.EpisodeActive = true;
-    fb->Status.CandidateAvailable = false;
-    fb->Status.CandidateApplied = false;
     fb->Status.ApplyBlockedByScalingMode = false;
     fb->PreviousSV = sv;
     return true;
@@ -187,8 +186,9 @@ void FB_FuzzySelfTuningBridge_Run(
     float pwm)
 {
     FuzzyTunableParameters_t current;
-    FuzzyTunableParameters_t candidate;
+    FuzzyTunableParameters_t nextParameters;
     bool changed;
+    bool wasCandidatePending;
 
     if ((fb == (FB_FuzzySelfTuningBridge_t *)0) ||
         (controller == (const FB_FuzzyController_t *)0))
@@ -202,7 +202,7 @@ void FB_FuzzySelfTuningBridge_Run(
         fb->PreviousSV = sv;
     }
 
-    if (!fb->Config.Enable)
+    if (!fb->Config.Enable || fb->Status.RollbackRecommended)
     {
         return;
     }
@@ -237,22 +237,58 @@ void FB_FuzzySelfTuningBridge_Run(
     }
 
     fb->Status.Current = current;
-    candidate = current;
+
+    /*
+     * A suggested candidate that has not been applied must remain a suggestion.
+     * Do not let another baseline episode masquerade as candidate verification.
+     */
+    if (fb->Status.CandidateAvailable && !fb->Status.CandidateApplied)
+    {
+        return;
+    }
+
+    nextParameters = current;
+    wasCandidatePending = fb->Tuner.Status.CandidatePending;
 
     changed = FB_FuzzySelfTuner_EvaluateEpisode(
         &fb->Tuner,
         FB_FuzzyPerformanceMonitor_GetMetrics(&fb->Monitor),
         &current,
-        &candidate);
+        &nextParameters);
 
-    if (changed)
+    if (!wasCandidatePending)
     {
-        fb->Status.Candidate = candidate;
-        fb->Status.CandidateAvailable = true;
-        fb->Status.CandidateApplied = false;
+        if (changed)
+        {
+            fb->Status.Candidate = nextParameters;
+            fb->Status.CandidateAvailable = true;
+            fb->Status.CandidateApplied = false;
+            fb->Status.RollbackRecommended = false;
+        }
+        return;
     }
 
-    /* Intentionally no automatic parameter write here. */
+    /* Verification is only meaningful after an explicit ApplyCandidate(). */
+    if (!fb->Status.CandidateApplied)
+    {
+        return;
+    }
+
+    if (fb->Tuner.Status.State == FUZZY_TUNER_ACCEPT)
+    {
+        fb->Status.CandidateAvailable = false;
+        fb->Status.CandidateApplied = false;
+        fb->Status.RollbackRecommended = false;
+        fb->HasApplyBackup = false;
+        return;
+    }
+
+    if (fb->Tuner.Status.State == FUZZY_TUNER_ROLLBACK)
+    {
+        /* Physical parameters remain untouched until the application rolls back. */
+        fb->Status.CandidateAvailable = false;
+        fb->Status.RollbackRecommended = true;
+    }
 }
 
 bool FB_FuzzySelfTuningBridge_GetCandidate(
@@ -292,6 +328,21 @@ const FuzzySelfTunerStatus_t *FB_FuzzySelfTuningBridge_GetTunerStatus(
     return &fb->Tuner.Status;
 }
 
+bool FB_FuzzySelfTuningBridge_RejectCandidate(FB_FuzzySelfTuningBridge_t *fb)
+{
+    if ((fb == (FB_FuzzySelfTuningBridge_t *)0) ||
+        !fb->Status.CandidateAvailable ||
+        fb->Status.CandidateApplied)
+    {
+        return false;
+    }
+
+    FB_FuzzySelfTuner_CancelCandidate(&fb->Tuner);
+    fb->Status.CandidateAvailable = false;
+    fb->Status.RollbackRecommended = false;
+    return true;
+}
+
 bool FB_FuzzySelfTuningBridge_ApplyCandidate(
     FB_FuzzySelfTuningBridge_t *fb,
     FB_FuzzyController_t *controller)
@@ -307,7 +358,9 @@ bool FB_FuzzySelfTuningBridge_ApplyCandidate(
 
     if ((fb == (FB_FuzzySelfTuningBridge_t *)0) ||
         (controller == (FB_FuzzyController_t *)0) ||
-        !fb->Status.CandidateAvailable)
+        !fb->Status.CandidateAvailable ||
+        fb->Status.CandidateApplied ||
+        fb->Status.RollbackRecommended)
     {
         return false;
     }
@@ -320,11 +373,7 @@ bool FB_FuzzySelfTuningBridge_ApplyCandidate(
         return false;
     }
 
-    /*
-     * Branch4 self tuning is intentionally layered over fast Auto Scaling.
-     * If Auto Scaling is disabled, there is no fast layer for the trim to
-     * supervise, so reject the apply instead of silently changing semantics.
-     */
+    /* Branch4 applies slow trims only on top of the fast Auto Scaling layer. */
     if (!controller->scaling.Config.AutoScalingEnable)
     {
         fb->Status.ApplyBlockedByScalingMode = true;
@@ -392,6 +441,7 @@ bool FB_FuzzySelfTuningBridge_ApplyCandidate(
     }
 
     fb->Status.CandidateApplied = true;
+    fb->Status.RollbackRecommended = false;
     return true;
 }
 
@@ -414,10 +464,15 @@ bool FB_FuzzySelfTuningBridge_Rollback(
         return false;
     }
 
-    /* Keep tuner bookkeeping aligned, but physical rollback has priority. */
-    (void)FB_FuzzySelfTuner_Rollback(&fb->Tuner, &tunerRollback);
+    /* If verification has not already marked rollback, update tuner bookkeeping. */
+    if (fb->Tuner.Status.CandidatePending)
+    {
+        (void)FB_FuzzySelfTuner_Rollback(&fb->Tuner, &tunerRollback);
+    }
 
+    fb->Status.CandidateAvailable = false;
     fb->Status.CandidateApplied = false;
+    fb->Status.RollbackRecommended = false;
     fb->Status.ApplyBlockedByScalingMode = false;
     fb->HasApplyBackup = false;
     return true;
