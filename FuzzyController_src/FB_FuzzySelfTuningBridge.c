@@ -4,33 +4,52 @@
  ******************************************************************************/
 #include "FB_FuzzySelfTuningBridge.h"
 
+#define BRIDGE_EPSILON (0.000001f)
+
 static float absf_local(float value)
 {
     return (value >= 0.0f) ? value : -value;
 }
 
-static bool apply_parameters(
-    FB_FuzzyController_t *controller,
-    const FuzzyTunableParameters_t *parameters)
+static float clampf_local(float value, float minimum, float maximum)
+{
+    if (value < minimum) return minimum;
+    if (value > maximum) return maximum;
+    return value;
+}
+
+static float safe_ratio(float desired, float current)
+{
+    if (absf_local(current) <= BRIDGE_EPSILON)
+    {
+        return 1.0f;
+    }
+
+    return desired / current;
+}
+
+static bool restore_apply_backup(
+    FB_FuzzySelfTuningBridge_t *fb,
+    FB_FuzzyController_t *controller)
 {
     bool ok;
 
-    if ((controller == (FB_FuzzyController_t *)0) ||
-        (parameters == (const FuzzyTunableParameters_t *)0))
+    if ((fb == (FB_FuzzySelfTuningBridge_t *)0) ||
+        (controller == (FB_FuzzyController_t *)0) ||
+        !fb->HasApplyBackup)
     {
         return false;
     }
 
-    ok = FB_FuzzyScaling_SetKe(&controller->scaling, parameters->Ke);
-    ok = FB_FuzzyScaling_SetKde(&controller->scaling, parameters->Kde) && ok;
-    ok = FB_FuzzyScaling_SetKu(&controller->scaling, parameters->Ku) && ok;
-    ok = FB_FuzzyScaling_SetErrorWindow(&controller->scaling, parameters->ErrorWindow) && ok;
+    ok = FB_FuzzyScaling_SetConfig(
+        &controller->scaling,
+        &fb->AppliedScalingConfigBackup);
 
     if (!FB_FuzzyController_SetApproachConfig(
             controller,
             controller->config.EnablePercentApproach,
-            parameters->FullPowerErrorRatio,
-            parameters->PrecisionErrorRatio,
+            fb->AppliedFullPowerErrorRatioBackup,
+            fb->AppliedPrecisionErrorRatioBackup,
             controller->config.FullPowerErrorMin_c,
             controller->config.PrecisionErrorMin_c,
             controller->config.ApproachDownSlewRate_pwm_per_s))
@@ -56,7 +75,7 @@ void FB_FuzzySelfTuningBridge_Init(FB_FuzzySelfTuningBridge_t *fb)
     fb->Status.EpisodeActive = false;
     fb->Status.CandidateAvailable = false;
     fb->Status.CandidateApplied = false;
-    fb->Status.ApplyBlockedByAutoScaling = false;
+    fb->Status.ApplyBlockedByScalingMode = false;
     fb->Status.EpisodeCount = 0U;
 
     fb->Status.Current.Ke = 0.0f;
@@ -69,6 +88,10 @@ void FB_FuzzySelfTuningBridge_Init(FB_FuzzySelfTuningBridge_t *fb)
 
     FB_FuzzyPerformanceMonitor_Init(&fb->Monitor);
     FB_FuzzySelfTuner_Init(&fb->Tuner);
+
+    fb->AppliedFullPowerErrorRatioBackup = 0.0f;
+    fb->AppliedPrecisionErrorRatioBackup = 0.0f;
+    fb->HasApplyBackup = false;
 
     fb->PreviousSV = 0.0f;
     fb->Initialized = true;
@@ -151,7 +174,7 @@ bool FB_FuzzySelfTuningBridge_StartEpisode(
     fb->Status.EpisodeActive = true;
     fb->Status.CandidateAvailable = false;
     fb->Status.CandidateApplied = false;
-    fb->Status.ApplyBlockedByAutoScaling = false;
+    fb->Status.ApplyBlockedByScalingMode = false;
     fb->PreviousSV = sv;
     return true;
 }
@@ -273,6 +296,15 @@ bool FB_FuzzySelfTuningBridge_ApplyCandidate(
     FB_FuzzySelfTuningBridge_t *fb,
     FB_FuzzyController_t *controller)
 {
+    float errorWindowRatio;
+    float keRatio;
+    float kdeRatio;
+    float kuRatio;
+    float keTrim;
+    float kdeTrim;
+    float kuTrim;
+    float errorWindowTrim;
+
     if ((fb == (FB_FuzzySelfTuningBridge_t *)0) ||
         (controller == (FB_FuzzyController_t *)0) ||
         !fb->Status.CandidateAvailable)
@@ -280,27 +312,82 @@ bool FB_FuzzySelfTuningBridge_ApplyCandidate(
         return false;
     }
 
-    fb->Status.ApplyBlockedByAutoScaling = false;
+    fb->Status.ApplyBlockedByScalingMode = false;
 
-    /* Shadow mode is the first hard safety gate. */
+    /* Shadow mode is the hard default safety gate. */
     if (fb->Config.ShadowMode)
     {
         return false;
     }
 
     /*
-     * Auto Scaling recalculates TargetKe/TargetKde/TargetKu every cycle.
-     * Until persistent self-tuning trim factors are implemented, reject the
-     * write rather than report a misleading successful apply.
+     * Branch4 self tuning is intentionally layered over fast Auto Scaling.
+     * If Auto Scaling is disabled, there is no fast layer for the trim to
+     * supervise, so reject the apply instead of silently changing semantics.
      */
-    if (controller->scaling.Config.AutoScalingEnable)
+    if (!controller->scaling.Config.AutoScalingEnable)
     {
-        fb->Status.ApplyBlockedByAutoScaling = true;
+        fb->Status.ApplyBlockedByScalingMode = true;
         return false;
     }
 
-    if (!apply_parameters(controller, &fb->Status.Candidate))
+    fb->AppliedScalingConfigBackup = controller->scaling.Config;
+    fb->AppliedFullPowerErrorRatioBackup = controller->config.FullPowerErrorRatio;
+    fb->AppliedPrecisionErrorRatioBackup = controller->config.PrecisionErrorRatio;
+    fb->HasApplyBackup = true;
+
+    errorWindowRatio = safe_ratio(
+        fb->Status.Candidate.ErrorWindow,
+        fb->Status.Current.ErrorWindow);
+
+    /* ErrorWindow changes inversely affect Ke/Kde, so compensate that coupling. */
+    keRatio = safe_ratio(fb->Status.Candidate.Ke, fb->Status.Current.Ke) *
+              errorWindowRatio;
+    kdeRatio = safe_ratio(fb->Status.Candidate.Kde, fb->Status.Current.Kde) *
+               errorWindowRatio;
+    kuRatio = safe_ratio(fb->Status.Candidate.Ku, fb->Status.Current.Ku);
+
+    keTrim = clampf_local(
+        controller->scaling.Config.SelfTuneKeTrim * keRatio,
+        FUZZY_SCALING_SELF_TUNE_TRIM_MIN,
+        FUZZY_SCALING_SELF_TUNE_TRIM_MAX);
+    kdeTrim = clampf_local(
+        controller->scaling.Config.SelfTuneKdeTrim * kdeRatio,
+        FUZZY_SCALING_SELF_TUNE_TRIM_MIN,
+        FUZZY_SCALING_SELF_TUNE_TRIM_MAX);
+    kuTrim = clampf_local(
+        controller->scaling.Config.SelfTuneKuTrim * kuRatio,
+        FUZZY_SCALING_SELF_TUNE_TRIM_MIN,
+        FUZZY_SCALING_SELF_TUNE_TRIM_MAX);
+    errorWindowTrim = clampf_local(
+        controller->scaling.Config.SelfTuneErrorWindowTrim * errorWindowRatio,
+        FUZZY_SCALING_SELF_TUNE_TRIM_MIN,
+        FUZZY_SCALING_SELF_TUNE_TRIM_MAX);
+
+    if (!FB_FuzzyScaling_SetSelfTuneTrim(
+            &controller->scaling,
+            keTrim,
+            kdeTrim,
+            kuTrim,
+            errorWindowTrim))
     {
+        fb->HasApplyBackup = false;
+        return false;
+    }
+
+    if (!FB_FuzzyController_SetApproachConfig(
+            controller,
+            controller->config.EnablePercentApproach,
+            fb->Status.Candidate.FullPowerErrorRatio,
+            fb->Status.Candidate.PrecisionErrorRatio,
+            controller->config.FullPowerErrorMin_c,
+            controller->config.PrecisionErrorMin_c,
+            controller->config.ApproachDownSlewRate_pwm_per_s))
+    {
+        (void)FB_FuzzyScaling_SetConfig(
+            &controller->scaling,
+            &fb->AppliedScalingConfigBackup);
+        fb->HasApplyBackup = false;
         return false;
     }
 
@@ -312,26 +399,26 @@ bool FB_FuzzySelfTuningBridge_Rollback(
     FB_FuzzySelfTuningBridge_t *fb,
     FB_FuzzyController_t *controller)
 {
-    FuzzyTunableParameters_t rollback;
+    FuzzyTunableParameters_t tunerRollback;
 
     if ((fb == (FB_FuzzySelfTuningBridge_t *)0) ||
-        (controller == (FB_FuzzyController_t *)0))
+        (controller == (FB_FuzzyController_t *)0) ||
+        !fb->Status.CandidateApplied ||
+        !fb->HasApplyBackup)
     {
         return false;
     }
 
-    if (!FB_FuzzySelfTuner_Rollback(&fb->Tuner, &rollback))
+    if (!restore_apply_backup(fb, controller))
     {
         return false;
     }
 
-    if (!apply_parameters(controller, &rollback))
-    {
-        return false;
-    }
+    /* Keep tuner bookkeeping aligned, but physical rollback has priority. */
+    (void)FB_FuzzySelfTuner_Rollback(&fb->Tuner, &tunerRollback);
 
-    fb->Status.Current = rollback;
     fb->Status.CandidateApplied = false;
-    fb->Status.ApplyBlockedByAutoScaling = false;
+    fb->Status.ApplyBlockedByScalingMode = false;
+    fb->HasApplyBackup = false;
     return true;
 }
