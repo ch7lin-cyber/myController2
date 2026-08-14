@@ -56,6 +56,7 @@ void FB_FuzzySelfTuningBridge_Init(FB_FuzzySelfTuningBridge_t *fb)
     fb->Status.EpisodeActive = false;
     fb->Status.CandidateAvailable = false;
     fb->Status.CandidateApplied = false;
+    fb->Status.ApplyBlockedByAutoScaling = false;
     fb->Status.EpisodeCount = 0U;
 
     fb->Status.Current.Ke = 0.0f;
@@ -150,6 +151,7 @@ bool FB_FuzzySelfTuningBridge_StartEpisode(
     fb->Status.EpisodeActive = true;
     fb->Status.CandidateAvailable = false;
     fb->Status.CandidateApplied = false;
+    fb->Status.ApplyBlockedByAutoScaling = false;
     fb->PreviousSV = sv;
     return true;
 }
@@ -278,9 +280,22 @@ bool FB_FuzzySelfTuningBridge_ApplyCandidate(
         return false;
     }
 
-    /* Shadow mode is a hard safety gate. */
+    fb->Status.ApplyBlockedByAutoScaling = false;
+
+    /* Shadow mode is the first hard safety gate. */
     if (fb->Config.ShadowMode)
     {
+        return false;
+    }
+
+    /*
+     * Auto Scaling recalculates TargetKe/TargetKde/TargetKu every cycle.
+     * Until persistent self-tuning trim factors are implemented, reject the
+     * write rather than report a misleading successful apply.
+     */
+    if (controller->scaling.Config.AutoScalingEnable)
+    {
+        fb->Status.ApplyBlockedByAutoScaling = true;
         return false;
     }
 
@@ -317,5 +332,6 @@ bool FB_FuzzySelfTuningBridge_Rollback(
 
     fb->Status.Current = rollback;
     fb->Status.CandidateApplied = false;
+    fb->Status.ApplyBlockedByAutoScaling = false;
     return true;
 }
