@@ -1,7 +1,7 @@
 /******************************************************************************
  * File    : FB_FuzzyScaling.h
- * Version : V2.0
- * Brief   : Auto / Adaptive Scaling Engine
+ * Version : V2.3
+ * Brief   : Auto / Adaptive Scaling Engine with persistent self-tune trims
  ******************************************************************************/
 #ifndef FB_FUZZY_SCALING_H
 #define FB_FUZZY_SCALING_H
@@ -35,6 +35,11 @@ extern "C" {
 #define FUZZY_SCALING_DEFAULT_MAX_PV_RATE     (20.0f)
 #define FUZZY_SCALING_DEFAULT_KU_SLEW_RATE    (2.0f)
 
+/* Persistent slow self-tuning multipliers. 1.0 means no trim. */
+#define FUZZY_SCALING_SELF_TUNE_TRIM_DEFAULT  (1.00f)
+#define FUZZY_SCALING_SELF_TUNE_TRIM_MIN      (0.50f)
+#define FUZZY_SCALING_SELF_TUNE_TRIM_MAX      (1.50f)
+
 typedef struct
 {
     float Ts;
@@ -52,6 +57,18 @@ typedef struct
     float DynamicGain;
     float MaxPVRate;
     float KuSlewRate;
+
+    /*
+     * Slow supervisory correction layer.
+     * Auto/Adaptive Scaling calculates the fast target first, then these trims
+     * are applied. This lets a slow self tuner learn without disabling the
+     * existing fast adaptive behavior.
+     */
+    float SelfTuneKeTrim;
+    float SelfTuneKdeTrim;
+    float SelfTuneKuTrim;
+    float SelfTuneErrorWindowTrim;
+
     bool AutoScalingEnable;
     bool AdaptiveEnable;
 } FuzzyScalingConfig_t;
@@ -131,6 +148,15 @@ MY_API bool FB_FuzzyScaling_SetKe(FB_FuzzyScaling_t *fb, float ke);
 MY_API bool FB_FuzzyScaling_SetKde(FB_FuzzyScaling_t *fb, float kde);
 MY_API bool FB_FuzzyScaling_SetKu(FB_FuzzyScaling_t *fb, float ku);
 MY_API bool FB_FuzzyScaling_SetErrorWindow(FB_FuzzyScaling_t *fb, float window);
+
+MY_API bool FB_FuzzyScaling_SetSelfTuneTrim(
+    FB_FuzzyScaling_t *fb,
+    float keTrim,
+    float kdeTrim,
+    float kuTrim,
+    float errorWindowTrim);
+
+MY_API void FB_FuzzyScaling_ResetSelfTuneTrim(FB_FuzzyScaling_t *fb);
 
 MY_API void FB_FuzzyScaling_EnableAuto(FB_FuzzyScaling_t *fb);
 MY_API void FB_FuzzyScaling_DisableAuto(FB_FuzzyScaling_t *fb);
