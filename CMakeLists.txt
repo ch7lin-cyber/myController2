@@ -33,6 +33,7 @@ set(FUZZY_CONTROLLER_SOURCES
     FuzzyController_src/FB_FuzzyParameterGuard.c
     FuzzyController_src/FB_FuzzySelfTuner.c
     FuzzyController_src/FB_FuzzySelfTuningBridge.c
+    FuzzyController_src/FB_FuzzyTemperatureProfile.c
 )
 
 if(MYCONTROLLER_BUILD_SHARED)
@@ -98,9 +99,6 @@ if(MYCONTROLLER_BUILD_PC_CONTROL)
 
     if(WIN32)
         target_compile_definitions(fuzzy_pc_bridge PRIVATE SSM_FB_BUILD_DLL)
-        # MinGW normally prefixes DLL targets with "lib".  The Python tool
-        # expects fuzzy_pc_bridge.dll on Windows, so normalize the filename
-        # across MSVC and MinGW.
         set_target_properties(fuzzy_pc_bridge PROPERTIES PREFIX "")
     elseif(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
         target_compile_definitions(fuzzy_pc_bridge PRIVATE SSM_FB_BUILD_SHARED)
@@ -117,7 +115,6 @@ if(MYCONTROLLER_BUILD_PC_CONTROL)
     endif()
 endif()
 
-# Thermal identification plant is kept separate from the reusable controller library.
 add_library(thermal_plant STATIC
     ControllPlant/myPlant_1.c
 )
@@ -130,7 +127,6 @@ target_include_directories(thermal_plant
 )
 
 if(NOT MSVC)
-    # expf/lroundf may require libm on Unix-like toolchains.
     target_link_libraries(thermal_plant PUBLIC m)
 endif()
 
