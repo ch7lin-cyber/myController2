@@ -40,6 +40,12 @@ add_executable(test_fuzzy_self_tuning_bridge
 target_link_libraries(test_fuzzy_self_tuning_bridge PRIVATE myController2::fuzzy_controller)
 add_test(NAME fuzzy_self_tuning_bridge COMMAND test_fuzzy_self_tuning_bridge)
 
+add_executable(test_fuzzy_temperature_profile
+    test_fuzzy_temperature_profile.c
+)
+target_link_libraries(test_fuzzy_temperature_profile PRIVATE myController2::fuzzy_controller)
+add_test(NAME fuzzy_temperature_profile COMMAND test_fuzzy_temperature_profile)
+
 if(MYCONTROLLER_BUILD_PC_CONTROL)
     add_executable(test_fuzzy_pc_bridge
         test_fuzzy_pc_bridge.c
@@ -48,8 +54,6 @@ if(MYCONTROLLER_BUILD_PC_CONTROL)
     add_test(NAME fuzzy_pc_bridge_api COMMAND test_fuzzy_pc_bridge)
 endif()
 
-# When testing a Windows shared-library build, ensure DLL directories are
-# visible to CTest at runtime. Static builds are unaffected.
 if(WIN32 AND MYCONTROLLER_BUILD_SHARED)
     set(_fuzzy_dll_path "$<TARGET_FILE_DIR:fuzzy_controller>")
     set_tests_properties(
@@ -59,6 +63,7 @@ if(WIN32 AND MYCONTROLLER_BUILD_SHARED)
         identified_plant_smoke
         fuzzy_self_tuner
         fuzzy_self_tuning_bridge
+        fuzzy_temperature_profile
         PROPERTIES ENVIRONMENT "PATH=${_fuzzy_dll_path};$ENV{PATH}"
     )
 endif()
