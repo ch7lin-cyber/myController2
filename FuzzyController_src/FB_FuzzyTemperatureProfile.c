@@ -23,6 +23,25 @@ static void clear_parameters(FuzzyTunableParameters_t *parameters)
     parameters->PrecisionErrorRatio = 0.0f;
 }
 
+static FuzzyTemperatureRecommendationLevel_e classify_confidence(
+    float confidence,
+    bool hasLearnedParameters,
+    float minimumConfidence,
+    float highConfidence)
+{
+    if (!hasLearnedParameters || (confidence < minimumConfidence))
+    {
+        return FUZZY_TEMP_RECOMMEND_NONE;
+    }
+
+    if (confidence < highConfidence)
+    {
+        return FUZZY_TEMP_RECOMMEND_EXPERIMENTAL;
+    }
+
+    return FUZZY_TEMP_RECOMMEND_HIGH_CONFIDENCE;
+}
+
 static float calculate_confidence(const FuzzyTemperatureRegion_t *region)
 {
     float observations;
@@ -59,6 +78,43 @@ static void clear_region(FuzzyTemperatureRegion_t *region)
     region->RollbackCount = 0U;
     region->Confidence = 0.0f;
     region->HasLearnedParameters = false;
+}
+
+static float region_center(const FuzzyTemperatureRegion_t *region)
+{
+    return 0.5f * (region->MinTemperature_c + region->MaxTemperature_c);
+}
+
+static float lerpf_local(float lower, float upper, float blend)
+{
+    return lower + (upper - lower) * blend;
+}
+
+static void interpolate_parameters(
+    const FuzzyTunableParameters_t *lower,
+    const FuzzyTunableParameters_t *upper,
+    float blend,
+    FuzzyTunableParameters_t *output)
+{
+    if ((lower == (const FuzzyTunableParameters_t *)0) ||
+        (upper == (const FuzzyTunableParameters_t *)0) ||
+        (output == (FuzzyTunableParameters_t *)0))
+    {
+        return;
+    }
+
+    output->Ke = lerpf_local(lower->Ke, upper->Ke, blend);
+    output->Kde = lerpf_local(lower->Kde, upper->Kde, blend);
+    output->Ku = lerpf_local(lower->Ku, upper->Ku, blend);
+    output->ErrorWindow = lerpf_local(lower->ErrorWindow, upper->ErrorWindow, blend);
+    output->FullPowerErrorRatio = lerpf_local(
+        lower->FullPowerErrorRatio,
+        upper->FullPowerErrorRatio,
+        blend);
+    output->PrecisionErrorRatio = lerpf_local(
+        lower->PrecisionErrorRatio,
+        upper->PrecisionErrorRatio,
+        blend);
 }
 
 void FB_FuzzyTemperatureProfile_Init(FB_FuzzyTemperatureProfile_t *fb)
@@ -289,18 +345,100 @@ bool FB_FuzzyTemperatureProfile_GetRecommendation(
     }
 
     recommendation->Parameters = region->LearnedParameters;
+    recommendation->Level = classify_confidence(
+        region->Confidence,
+        true,
+        minimumConfidence,
+        highConfidence);
 
-    if (region->Confidence < minimumConfidence)
+    return true;
+}
+
+bool FB_FuzzyTemperatureProfile_GetInterpolatedRecommendation(
+    const FB_FuzzyTemperatureProfile_t *fb,
+    float temperature_c,
+    float minimumConfidence,
+    float highConfidence,
+    FuzzyTemperatureInterpolatedRecommendation_t *recommendation)
+{
+    FuzzyTemperatureRecommendation_t direct;
+    uint8_t i;
+
+    if ((fb == (const FB_FuzzyTemperatureProfile_t *)0) ||
+        (recommendation == (FuzzyTemperatureInterpolatedRecommendation_t *)0))
     {
-        recommendation->Level = FUZZY_TEMP_RECOMMEND_NONE;
+        return false;
     }
-    else if (region->Confidence < highConfidence)
+
+    if (!FB_FuzzyTemperatureProfile_GetRecommendation(
+            fb,
+            temperature_c,
+            minimumConfidence,
+            highConfidence,
+            &direct))
     {
-        recommendation->Level = FUZZY_TEMP_RECOMMEND_EXPERIMENTAL;
+        return false;
     }
-    else
+
+    recommendation->Recommendation = direct;
+    recommendation->LowerRegionIndex = direct.RegionIndex;
+    recommendation->UpperRegionIndex = direct.RegionIndex;
+    recommendation->BlendFactor = 0.0f;
+    recommendation->Interpolated = false;
+
+    if (fb->RegionCount < 2U)
     {
-        recommendation->Level = FUZZY_TEMP_RECOMMEND_HIGH_CONFIDENCE;
+        return true;
+    }
+
+    for (i = 0U; i < (uint8_t)(fb->RegionCount - 1U); ++i)
+    {
+        const FuzzyTemperatureRegion_t *lower = &fb->Regions[i];
+        const FuzzyTemperatureRegion_t *upper = &fb->Regions[i + 1U];
+        float lowerCenter = region_center(lower);
+        float upperCenter = region_center(upper);
+        float blend;
+        float confidence;
+
+        if ((temperature_c <= lowerCenter) || (temperature_c >= upperCenter))
+        {
+            continue;
+        }
+
+        if (!lower->HasLearnedParameters || !upper->HasLearnedParameters)
+        {
+            return true;
+        }
+
+        if (upperCenter <= lowerCenter)
+        {
+            return true;
+        }
+
+        blend = (temperature_c - lowerCenter) / (upperCenter - lowerCenter);
+        blend = clamp01(blend);
+
+        interpolate_parameters(
+            &lower->LearnedParameters,
+            &upper->LearnedParameters,
+            blend,
+            &recommendation->Recommendation.Parameters);
+
+        confidence = (lower->Confidence < upper->Confidence) ?
+                     lower->Confidence : upper->Confidence;
+
+        recommendation->Recommendation.Confidence = confidence;
+        recommendation->Recommendation.HasLearnedParameters = true;
+        recommendation->Recommendation.Level = classify_confidence(
+            confidence,
+            true,
+            minimumConfidence,
+            highConfidence);
+        recommendation->LowerRegionIndex = (int16_t)i;
+        recommendation->UpperRegionIndex = (int16_t)(i + 1U);
+        recommendation->BlendFactor = blend;
+        recommendation->Interpolated = true;
+        return true;
     }
 
     return true;
