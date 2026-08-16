@@ -28,6 +28,26 @@ static float safe_ratio(float desired, float current)
     return desired / current;
 }
 
+static float get_region_confidence(
+    const FB_FuzzySelfTuningBridge_t *fb,
+    int16_t regionIndex)
+{
+    const FuzzyTemperatureRegion_t *region;
+
+    if ((fb == (const FB_FuzzySelfTuningBridge_t *)0) ||
+        (regionIndex < 0))
+    {
+        return 0.0f;
+    }
+
+    region = FB_FuzzyTemperatureProfile_GetRegion(
+        &fb->TemperatureProfile,
+        (uint8_t)regionIndex);
+
+    return (region != (const FuzzyTemperatureRegion_t *)0) ?
+           region->Confidence : 0.0f;
+}
+
 static bool restore_apply_backup(
     FB_FuzzySelfTuningBridge_t *fb,
     FB_FuzzyController_t *controller)
@@ -78,6 +98,10 @@ void FB_FuzzySelfTuningBridge_Init(FB_FuzzySelfTuningBridge_t *fb)
     fb->Status.RollbackRecommended = false;
     fb->Status.ApplyBlockedByScalingMode = false;
     fb->Status.EpisodeCount = 0U;
+    fb->Status.ActiveRegion = FUZZY_SELF_TUNING_REGION_INVALID;
+    fb->Status.CandidateRegion = FUZZY_SELF_TUNING_REGION_INVALID;
+    fb->Status.ActiveRegionConfidence = 0.0f;
+    fb->Status.CandidateRegionConfidence = 0.0f;
 
     fb->Status.Current.Ke = 0.0f;
     fb->Status.Current.Kde = 0.0f;
@@ -89,6 +113,7 @@ void FB_FuzzySelfTuningBridge_Init(FB_FuzzySelfTuningBridge_t *fb)
 
     FB_FuzzyPerformanceMonitor_Init(&fb->Monitor);
     FB_FuzzySelfTuner_Init(&fb->Tuner);
+    FB_FuzzyTemperatureProfile_Init(&fb->TemperatureProfile);
 
     fb->AppliedFullPowerErrorRatioBackup = 0.0f;
     fb->AppliedPrecisionErrorRatioBackup = 0.0f;
@@ -150,6 +175,8 @@ bool FB_FuzzySelfTuningBridge_StartEpisode(
     float pv,
     float pwm)
 {
+    int16_t regionIndex;
+
     if ((fb == (FB_FuzzySelfTuningBridge_t *)0) ||
         (controller == (const FB_FuzzyController_t *)0))
     {
@@ -161,15 +188,21 @@ bool FB_FuzzySelfTuningBridge_StartEpisode(
         FB_FuzzySelfTuningBridge_Init(fb);
     }
 
-    /*
-     * Freeze learning while an explicit application decision is pending.
-     * This preserves the exact controller snapshot that the candidate was
-     * generated from and prevents Auto Scaling drift from changing its anchor.
-     */
     if (!fb->Config.Enable ||
         fb->Status.RollbackRecommended ||
         (fb->Status.CandidateAvailable && !fb->Status.CandidateApplied))
     {
+        return false;
+    }
+
+    regionIndex = FB_FuzzyTemperatureProfile_FindRegion(
+        &fb->TemperatureProfile,
+        sv);
+
+    if (regionIndex < 0)
+    {
+        fb->Status.ActiveRegion = FUZZY_SELF_TUNING_REGION_INVALID;
+        fb->Status.ActiveRegionConfidence = 0.0f;
         return false;
     }
 
@@ -178,12 +211,13 @@ bool FB_FuzzySelfTuningBridge_StartEpisode(
         return false;
     }
 
-    /* Keep episode timing and SV-change detection aligned with the controller. */
     fb->Monitor.Config.Ts = controller->config.Ts;
     fb->Monitor.Config.SvChangeThreshold_c = fb->Config.SVChangeThreshold_c;
 
     FB_FuzzyPerformanceMonitor_StartEpisode(&fb->Monitor, sv, pv, pwm);
     fb->Status.EpisodeActive = true;
+    fb->Status.ActiveRegion = regionIndex;
+    fb->Status.ActiveRegionConfidence = get_region_confidence(fb, regionIndex);
     fb->Status.ApplyBlockedByScalingMode = false;
     fb->PreviousSV = sv;
     return true;
@@ -200,6 +234,7 @@ void FB_FuzzySelfTuningBridge_Run(
     FuzzyTunableParameters_t nextParameters;
     bool changed;
     bool wasCandidatePending;
+    int16_t completedRegion;
 
     if ((fb == (FB_FuzzySelfTuningBridge_t *)0) ||
         (controller == (const FB_FuzzyController_t *)0))
@@ -218,7 +253,6 @@ void FB_FuzzySelfTuningBridge_Run(
         return;
     }
 
-    /* A suggested, unapplied candidate freezes new learning until Apply/Reject. */
     if (fb->Status.CandidateAvailable && !fb->Status.CandidateApplied)
     {
         fb->PreviousSV = sv;
@@ -248,6 +282,17 @@ void FB_FuzzySelfTuningBridge_Run(
 
     fb->Status.EpisodeActive = false;
     fb->Status.EpisodeCount++;
+    completedRegion = fb->Status.ActiveRegion;
+
+    if (completedRegion >= 0)
+    {
+        (void)FB_FuzzyTemperatureProfile_RecordObservation(
+            &fb->TemperatureProfile,
+            (uint8_t)completedRegion);
+        fb->Status.ActiveRegionConfidence = get_region_confidence(
+            fb,
+            completedRegion);
+    }
 
     if (!FB_FuzzySelfTuningBridge_GetControllerParameters(controller, &current))
     {
@@ -272,11 +317,14 @@ void FB_FuzzySelfTuningBridge_Run(
             fb->Status.CandidateAvailable = true;
             fb->Status.CandidateApplied = false;
             fb->Status.RollbackRecommended = false;
+            fb->Status.CandidateRegion = completedRegion;
+            fb->Status.CandidateRegionConfidence = get_region_confidence(
+                fb,
+                completedRegion);
         }
         return;
     }
 
-    /* Verification is only meaningful after an explicit ApplyCandidate(). */
     if (!fb->Status.CandidateApplied)
     {
         return;
@@ -284,6 +332,17 @@ void FB_FuzzySelfTuningBridge_Run(
 
     if (fb->Tuner.Status.State == FUZZY_TUNER_ACCEPT)
     {
+        if (fb->Status.CandidateRegion >= 0)
+        {
+            (void)FB_FuzzyTemperatureProfile_RecordAccepted(
+                &fb->TemperatureProfile,
+                (uint8_t)fb->Status.CandidateRegion,
+                &fb->Status.Candidate);
+            fb->Status.CandidateRegionConfidence = get_region_confidence(
+                fb,
+                fb->Status.CandidateRegion);
+        }
+
         fb->Status.CandidateAvailable = false;
         fb->Status.CandidateApplied = false;
         fb->Status.RollbackRecommended = false;
@@ -293,7 +352,6 @@ void FB_FuzzySelfTuningBridge_Run(
 
     if (fb->Tuner.Status.State == FUZZY_TUNER_ROLLBACK)
     {
-        /* Physical parameters remain untouched until the application rolls back. */
         fb->Status.CandidateAvailable = false;
         fb->Status.RollbackRecommended = true;
     }
@@ -336,6 +394,34 @@ const FuzzySelfTunerStatus_t *FB_FuzzySelfTuningBridge_GetTunerStatus(
     return &fb->Tuner.Status;
 }
 
+const FuzzyTemperatureRegion_t *FB_FuzzySelfTuningBridge_GetActiveRegion(
+    const FB_FuzzySelfTuningBridge_t *fb)
+{
+    if ((fb == (const FB_FuzzySelfTuningBridge_t *)0) ||
+        (fb->Status.ActiveRegion < 0))
+    {
+        return (const FuzzyTemperatureRegion_t *)0;
+    }
+
+    return FB_FuzzyTemperatureProfile_GetRegion(
+        &fb->TemperatureProfile,
+        (uint8_t)fb->Status.ActiveRegion);
+}
+
+const FuzzyTemperatureRegion_t *FB_FuzzySelfTuningBridge_GetCandidateRegion(
+    const FB_FuzzySelfTuningBridge_t *fb)
+{
+    if ((fb == (const FB_FuzzySelfTuningBridge_t *)0) ||
+        (fb->Status.CandidateRegion < 0))
+    {
+        return (const FuzzyTemperatureRegion_t *)0;
+    }
+
+    return FB_FuzzyTemperatureProfile_GetRegion(
+        &fb->TemperatureProfile,
+        (uint8_t)fb->Status.CandidateRegion);
+}
+
 bool FB_FuzzySelfTuningBridge_RejectCandidate(FB_FuzzySelfTuningBridge_t *fb)
 {
     if ((fb == (FB_FuzzySelfTuningBridge_t *)0) ||
@@ -348,6 +434,8 @@ bool FB_FuzzySelfTuningBridge_RejectCandidate(FB_FuzzySelfTuningBridge_t *fb)
     FB_FuzzySelfTuner_CancelCandidate(&fb->Tuner);
     fb->Status.CandidateAvailable = false;
     fb->Status.RollbackRecommended = false;
+    fb->Status.CandidateRegion = FUZZY_SELF_TUNING_REGION_INVALID;
+    fb->Status.CandidateRegionConfidence = 0.0f;
     return true;
 }
 
@@ -368,20 +456,19 @@ bool FB_FuzzySelfTuningBridge_ApplyCandidate(
         (controller == (FB_FuzzyController_t *)0) ||
         !fb->Status.CandidateAvailable ||
         fb->Status.CandidateApplied ||
-        fb->Status.RollbackRecommended)
+        fb->Status.RollbackRecommended ||
+        (fb->Status.CandidateRegion < 0))
     {
         return false;
     }
 
     fb->Status.ApplyBlockedByScalingMode = false;
 
-    /* Shadow mode is the hard default safety gate. */
     if (fb->Config.ShadowMode)
     {
         return false;
     }
 
-    /* Branch4 applies slow trims only on top of the fast Auto Scaling layer. */
     if (!controller->scaling.Config.AutoScalingEnable)
     {
         fb->Status.ApplyBlockedByScalingMode = true;
@@ -397,7 +484,6 @@ bool FB_FuzzySelfTuningBridge_ApplyCandidate(
         fb->Status.Candidate.ErrorWindow,
         fb->Status.Current.ErrorWindow);
 
-    /* ErrorWindow changes inversely affect Ke/Kde, so compensate that coupling. */
     keRatio = safe_ratio(fb->Status.Candidate.Ke, fb->Status.Current.Ke) *
               errorWindowRatio;
     kdeRatio = safe_ratio(fb->Status.Candidate.Kde, fb->Status.Current.Kde) *
@@ -458,6 +544,7 @@ bool FB_FuzzySelfTuningBridge_Rollback(
     FB_FuzzyController_t *controller)
 {
     FuzzyTunableParameters_t tunerRollback;
+    int16_t rollbackRegion;
 
     if ((fb == (FB_FuzzySelfTuningBridge_t *)0) ||
         (controller == (FB_FuzzyController_t *)0) ||
@@ -467,15 +554,26 @@ bool FB_FuzzySelfTuningBridge_Rollback(
         return false;
     }
 
+    rollbackRegion = fb->Status.CandidateRegion;
+
     if (!restore_apply_backup(fb, controller))
     {
         return false;
     }
 
-    /* If verification has not already marked rollback, update tuner bookkeeping. */
     if (fb->Tuner.Status.CandidatePending)
     {
         (void)FB_FuzzySelfTuner_Rollback(&fb->Tuner, &tunerRollback);
+    }
+
+    if (rollbackRegion >= 0)
+    {
+        (void)FB_FuzzyTemperatureProfile_RecordRollback(
+            &fb->TemperatureProfile,
+            (uint8_t)rollbackRegion);
+        fb->Status.CandidateRegionConfidence = get_region_confidence(
+            fb,
+            rollbackRegion);
     }
 
     fb->Status.CandidateAvailable = false;
