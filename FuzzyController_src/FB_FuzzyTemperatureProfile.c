@@ -11,6 +11,18 @@ static float clamp01(float value)
     return value;
 }
 
+static void clear_parameters(FuzzyTunableParameters_t *parameters)
+{
+    if (parameters == (FuzzyTunableParameters_t *)0) return;
+
+    parameters->Ke = 0.0f;
+    parameters->Kde = 0.0f;
+    parameters->Ku = 0.0f;
+    parameters->ErrorWindow = 0.0f;
+    parameters->FullPowerErrorRatio = 0.0f;
+    parameters->PrecisionErrorRatio = 0.0f;
+}
+
 static float calculate_confidence(const FuzzyTemperatureRegion_t *region)
 {
     float observations;
@@ -41,12 +53,7 @@ static void clear_region(FuzzyTemperatureRegion_t *region)
 
     region->MinTemperature_c = 0.0f;
     region->MaxTemperature_c = 0.0f;
-    region->LearnedParameters.Ke = 0.0f;
-    region->LearnedParameters.Kde = 0.0f;
-    region->LearnedParameters.Ku = 0.0f;
-    region->LearnedParameters.ErrorWindow = 0.0f;
-    region->LearnedParameters.FullPowerErrorRatio = 0.0f;
-    region->LearnedParameters.PrecisionErrorRatio = 0.0f;
+    clear_parameters(&region->LearnedParameters);
     region->ObservationCount = 0U;
     region->AcceptedCount = 0U;
     region->RollbackCount = 0U;
@@ -233,4 +240,68 @@ const FuzzyTemperatureRegion_t *FB_FuzzyTemperatureProfile_GetRegion(
     }
 
     return &fb->Regions[regionIndex];
+}
+
+bool FB_FuzzyTemperatureProfile_GetRecommendation(
+    const FB_FuzzyTemperatureProfile_t *fb,
+    float temperature_c,
+    float minimumConfidence,
+    float highConfidence,
+    FuzzyTemperatureRecommendation_t *recommendation)
+{
+    int16_t regionIndex;
+    const FuzzyTemperatureRegion_t *region;
+
+    if ((fb == (const FB_FuzzyTemperatureProfile_t *)0) ||
+        (recommendation == (FuzzyTemperatureRecommendation_t *)0) ||
+        (minimumConfidence < 0.0f) ||
+        (highConfidence > 1.0f) ||
+        (minimumConfidence > highConfidence))
+    {
+        return false;
+    }
+
+    recommendation->RegionIndex = -1;
+    recommendation->Confidence = 0.0f;
+    recommendation->Level = FUZZY_TEMP_RECOMMEND_NONE;
+    recommendation->HasLearnedParameters = false;
+    clear_parameters(&recommendation->Parameters);
+
+    regionIndex = FB_FuzzyTemperatureProfile_FindRegion(fb, temperature_c);
+    if (regionIndex < 0)
+    {
+        return false;
+    }
+
+    region = FB_FuzzyTemperatureProfile_GetRegion(fb, (uint8_t)regionIndex);
+    if (region == (const FuzzyTemperatureRegion_t *)0)
+    {
+        return false;
+    }
+
+    recommendation->RegionIndex = regionIndex;
+    recommendation->Confidence = region->Confidence;
+    recommendation->HasLearnedParameters = region->HasLearnedParameters;
+
+    if (!region->HasLearnedParameters)
+    {
+        return true;
+    }
+
+    recommendation->Parameters = region->LearnedParameters;
+
+    if (region->Confidence < minimumConfidence)
+    {
+        recommendation->Level = FUZZY_TEMP_RECOMMEND_NONE;
+    }
+    else if (region->Confidence < highConfidence)
+    {
+        recommendation->Level = FUZZY_TEMP_RECOMMEND_EXPERIMENTAL;
+    }
+    else
+    {
+        recommendation->Level = FUZZY_TEMP_RECOMMEND_HIGH_CONFIDENCE;
+    }
+
+    return true;
 }
