@@ -37,6 +37,15 @@ typedef struct
 
 typedef struct
 {
+    FuzzyTemperatureRecommendation_t Recommendation;
+    int16_t LowerRegionIndex;
+    int16_t UpperRegionIndex;
+    float BlendFactor;
+    bool Interpolated;
+} FuzzyTemperatureInterpolatedRecommendation_t;
+
+typedef struct
+{
     float MinTemperature_c;
     float MaxTemperature_c;
     FuzzyTunableParameters_t LearnedParameters;
@@ -82,15 +91,6 @@ MY_API const FuzzyTemperatureRegion_t *FB_FuzzyTemperatureProfile_GetRegion(
  * This function never writes controller parameters and never changes learning
  * state. It only classifies already accepted profile data for diagnostics or
  * application-level decisions.
- *
- * Return value:
- *   true  : temperature belongs to a configured region and thresholds are valid.
- *   false : invalid input, invalid thresholds, or temperature outside all regions.
- *
- * Recommendation Level:
- *   NONE         : no learned parameters, or confidence < minimumConfidence.
- *   EXPERIMENTAL : confidence >= minimumConfidence and < highConfidence.
- *   HIGH         : confidence >= highConfidence.
  */
 MY_API bool FB_FuzzyTemperatureProfile_GetRecommendation(
     const FB_FuzzyTemperatureProfile_t *fb,
@@ -98,6 +98,23 @@ MY_API bool FB_FuzzyTemperatureProfile_GetRecommendation(
     float minimumConfidence,
     float highConfidence,
     FuzzyTemperatureRecommendation_t *recommendation);
+
+/*
+ * Read-only smooth recommendation between neighboring region-center anchors.
+ * Interpolation occurs only when BOTH adjacent regions contain accepted learned
+ * parameters. Effective confidence is deliberately conservative: the lower of
+ * the two source-region confidences. If interpolation is not possible, this API
+ * falls back to the direct recommendation for the containing region.
+ *
+ * BlendFactor: 0.0 = lower-region learned parameters, 1.0 = upper-region.
+ * No controller state or learning state is modified.
+ */
+MY_API bool FB_FuzzyTemperatureProfile_GetInterpolatedRecommendation(
+    const FB_FuzzyTemperatureProfile_t *fb,
+    float temperature_c,
+    float minimumConfidence,
+    float highConfidence,
+    FuzzyTemperatureInterpolatedRecommendation_t *recommendation);
 
 #ifdef __cplusplus
 }
