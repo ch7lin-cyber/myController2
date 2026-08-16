@@ -33,6 +33,7 @@ set(FUZZY_CONTROLLER_SOURCES
     FuzzyController_src/FB_FuzzyParameterGuard.c
     FuzzyController_src/FB_FuzzySelfTuner.c
     FuzzyController_src/FB_FuzzySelfTuningBridge.c
+    FuzzyController_src/FB_FuzzySelfTuningRecommendation.c
     FuzzyController_src/FB_FuzzyTemperatureProfile.c
 )
 
