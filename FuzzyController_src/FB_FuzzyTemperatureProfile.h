@@ -16,6 +16,24 @@ extern "C" {
 
 #define FUZZY_TEMP_PROFILE_MAX_REGIONS        (8U)
 #define FUZZY_TEMP_PROFILE_DEFAULT_REGIONS    (5U)
+#define FUZZY_TEMP_PROFILE_RECOMMEND_MIN_DEFAULT   (0.30f)
+#define FUZZY_TEMP_PROFILE_RECOMMEND_HIGH_DEFAULT  (0.70f)
+
+typedef enum
+{
+    FUZZY_TEMP_RECOMMEND_NONE = 0,
+    FUZZY_TEMP_RECOMMEND_EXPERIMENTAL,
+    FUZZY_TEMP_RECOMMEND_HIGH_CONFIDENCE
+} FuzzyTemperatureRecommendationLevel_e;
+
+typedef struct
+{
+    int16_t RegionIndex;
+    float Confidence;
+    FuzzyTemperatureRecommendationLevel_e Level;
+    bool HasLearnedParameters;
+    FuzzyTunableParameters_t Parameters;
+} FuzzyTemperatureRecommendation_t;
 
 typedef struct
 {
@@ -58,6 +76,28 @@ MY_API bool FB_FuzzyTemperatureProfile_RecordRollback(
 MY_API const FuzzyTemperatureRegion_t *FB_FuzzyTemperatureProfile_GetRegion(
     const FB_FuzzyTemperatureProfile_t *fb,
     uint8_t regionIndex);
+
+/*
+ * Read-only recommendation query.
+ * This function never writes controller parameters and never changes learning
+ * state. It only classifies already accepted profile data for diagnostics or
+ * application-level decisions.
+ *
+ * Return value:
+ *   true  : temperature belongs to a configured region and thresholds are valid.
+ *   false : invalid input, invalid thresholds, or temperature outside all regions.
+ *
+ * Recommendation Level:
+ *   NONE         : no learned parameters, or confidence < minimumConfidence.
+ *   EXPERIMENTAL : confidence >= minimumConfidence and < highConfidence.
+ *   HIGH         : confidence >= highConfidence.
+ */
+MY_API bool FB_FuzzyTemperatureProfile_GetRecommendation(
+    const FB_FuzzyTemperatureProfile_t *fb,
+    float temperature_c,
+    float minimumConfidence,
+    float highConfidence,
+    FuzzyTemperatureRecommendation_t *recommendation);
 
 #ifdef __cplusplus
 }
