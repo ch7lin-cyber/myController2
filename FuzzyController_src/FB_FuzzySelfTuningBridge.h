@@ -110,7 +110,7 @@ MY_API const FuzzyTemperatureRegion_t *FB_FuzzySelfTuningBridge_GetCandidateRegi
     const FB_FuzzySelfTuningBridge_t *fb);
 
 /*
- * Read-only learned-profile recommendation. Uses the conservative default
+ * Read-only learned-profile recommendation. Uses conservative default
  * confidence thresholds (0.30 experimental / 0.70 high confidence).
  * This API never modifies controller parameters or tuning state.
  */
@@ -118,6 +118,16 @@ MY_API bool FB_FuzzySelfTuningBridge_GetRecommendation(
     const FB_FuzzySelfTuningBridge_t *fb,
     float sv,
     FuzzyTemperatureRecommendation_t *recommendation);
+
+/*
+ * Read-only smooth recommendation between neighboring learned region centers.
+ * No controller write occurs. If interpolation cannot be performed safely,
+ * the result falls back to the direct containing-region recommendation.
+ */
+MY_API bool FB_FuzzySelfTuningBridge_GetInterpolatedRecommendation(
+    const FB_FuzzySelfTuningBridge_t *fb,
+    float sv,
+    FuzzyTemperatureInterpolatedRecommendation_t *recommendation);
 
 /* Reject a suggested candidate that has not been applied. */
 MY_API bool FB_FuzzySelfTuningBridge_RejectCandidate(
