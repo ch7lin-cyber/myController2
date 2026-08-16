@@ -15,10 +15,13 @@
 #include "FB_FuzzyController.h"
 #include "FB_FuzzyPerformanceMonitor.h"
 #include "FB_FuzzySelfTuner.h"
+#include "FB_FuzzyTemperatureProfile.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+#define FUZZY_SELF_TUNING_REGION_INVALID   (-1)
 
 typedef struct
 {
@@ -36,6 +39,13 @@ typedef struct
     bool RollbackRecommended;
     bool ApplyBlockedByScalingMode;
     uint32_t EpisodeCount;
+
+    /* Temperature-profile diagnostics. */
+    int16_t ActiveRegion;
+    int16_t CandidateRegion;
+    float ActiveRegionConfidence;
+    float CandidateRegionConfidence;
+
     FuzzyTunableParameters_t Current;
     FuzzyTunableParameters_t Candidate;
 } FuzzySelfTuningBridgeStatus_t;
@@ -46,6 +56,7 @@ typedef struct
     FuzzySelfTuningBridgeStatus_t Status;
     FB_FuzzyPerformanceMonitor_t Monitor;
     FB_FuzzySelfTuner_t Tuner;
+    FB_FuzzyTemperatureProfile_t TemperatureProfile;
 
     /* Exact rollback snapshot captured only when a candidate is explicitly applied. */
     FuzzyScalingConfig_t AppliedScalingConfigBackup;
@@ -90,6 +101,12 @@ MY_API const FuzzyPerformanceMetrics_t *FB_FuzzySelfTuningBridge_GetMetrics(
     const FB_FuzzySelfTuningBridge_t *fb);
 
 MY_API const FuzzySelfTunerStatus_t *FB_FuzzySelfTuningBridge_GetTunerStatus(
+    const FB_FuzzySelfTuningBridge_t *fb);
+
+MY_API const FuzzyTemperatureRegion_t *FB_FuzzySelfTuningBridge_GetActiveRegion(
+    const FB_FuzzySelfTuningBridge_t *fb);
+
+MY_API const FuzzyTemperatureRegion_t *FB_FuzzySelfTuningBridge_GetCandidateRegion(
     const FB_FuzzySelfTuningBridge_t *fb);
 
 /* Reject a suggested candidate that has not been applied. */
