@@ -121,11 +121,97 @@ static void test_regions_learn_independently(void)
     assert(r3->ObservationCount == 0U);
 }
 
+static void test_recommendation_is_read_only(void)
+{
+    FB_FuzzyTemperatureProfile_t profile;
+    FuzzyTemperatureRecommendation_t recommendation;
+    const FuzzyTemperatureRegion_t *region;
+    uint32_t observationsBefore;
+
+    FB_FuzzyTemperatureProfile_Init(&profile);
+    region = FB_FuzzyTemperatureProfile_GetRegion(&profile, 3U);
+    observationsBefore = region->ObservationCount;
+
+    assert(FB_FuzzyTemperatureProfile_GetRecommendation(
+        &profile,
+        175.0f,
+        FUZZY_TEMP_PROFILE_RECOMMEND_MIN_DEFAULT,
+        FUZZY_TEMP_PROFILE_RECOMMEND_HIGH_DEFAULT,
+        &recommendation));
+
+    assert(recommendation.RegionIndex == 3);
+    assert(!recommendation.HasLearnedParameters);
+    assert(recommendation.Level == FUZZY_TEMP_RECOMMEND_NONE);
+
+    region = FB_FuzzyTemperatureProfile_GetRegion(&profile, 3U);
+    assert(region->ObservationCount == observationsBefore);
+    assert(!region->HasLearnedParameters);
+}
+
+static void test_recommendation_confidence_levels(void)
+{
+    FB_FuzzyTemperatureProfile_t profile;
+    FuzzyTemperatureRecommendation_t recommendation;
+    FuzzyTunableParameters_t learned = sample_parameters();
+    unsigned i;
+
+    FB_FuzzyTemperatureProfile_Init(&profile);
+
+    /* One successful observation is intentionally only experimental. */
+    assert(FB_FuzzyTemperatureProfile_RecordObservation(&profile, 3U));
+    assert(FB_FuzzyTemperatureProfile_RecordAccepted(&profile, 3U, &learned));
+
+    assert(FB_FuzzyTemperatureProfile_GetRecommendation(
+        &profile,
+        175.0f,
+        FUZZY_TEMP_PROFILE_RECOMMEND_MIN_DEFAULT,
+        FUZZY_TEMP_PROFILE_RECOMMEND_HIGH_DEFAULT,
+        &recommendation));
+
+    assert(recommendation.HasLearnedParameters);
+    assert(recommendation.Level == FUZZY_TEMP_RECOMMEND_EXPERIMENTAL);
+    assert(nearly_equal(recommendation.Parameters.Ku, learned.Ku, 0.000001f));
+
+    for (i = 0U; i < 9U; ++i)
+    {
+        assert(FB_FuzzyTemperatureProfile_RecordObservation(&profile, 3U));
+        assert(FB_FuzzyTemperatureProfile_RecordAccepted(&profile, 3U, &learned));
+    }
+
+    assert(FB_FuzzyTemperatureProfile_GetRecommendation(
+        &profile,
+        175.0f,
+        FUZZY_TEMP_PROFILE_RECOMMEND_MIN_DEFAULT,
+        FUZZY_TEMP_PROFILE_RECOMMEND_HIGH_DEFAULT,
+        &recommendation));
+
+    assert(recommendation.Level == FUZZY_TEMP_RECOMMEND_HIGH_CONFIDENCE);
+    assert(recommendation.Confidence > 0.90f);
+}
+
+static void test_recommendation_rejects_invalid_query(void)
+{
+    FB_FuzzyTemperatureProfile_t profile;
+    FuzzyTemperatureRecommendation_t recommendation;
+
+    FB_FuzzyTemperatureProfile_Init(&profile);
+
+    assert(!FB_FuzzyTemperatureProfile_GetRecommendation(
+        &profile, 300.0f, 0.30f, 0.70f, &recommendation));
+    assert(!FB_FuzzyTemperatureProfile_GetRecommendation(
+        &profile, 130.0f, 0.80f, 0.70f, &recommendation));
+    assert(!FB_FuzzyTemperatureProfile_GetRecommendation(
+        &profile, 130.0f, -0.10f, 0.70f, &recommendation));
+}
+
 int main(void)
 {
     test_default_region_mapping();
     test_confidence_grows_conservatively();
     test_rollback_reduces_confidence();
     test_regions_learn_independently();
+    test_recommendation_is_read_only();
+    test_recommendation_confidence_levels();
+    test_recommendation_rejects_invalid_query();
     return 0;
 }
