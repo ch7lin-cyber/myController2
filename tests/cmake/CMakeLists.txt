@@ -52,6 +52,12 @@ add_executable(test_fuzzy_profile_recommendation
 target_link_libraries(test_fuzzy_profile_recommendation PRIVATE myController2::fuzzy_controller)
 add_test(NAME fuzzy_profile_recommendation COMMAND test_fuzzy_profile_recommendation)
 
+add_executable(test_fuzzy_profile_persistence
+    test_fuzzy_profile_persistence.c
+)
+target_link_libraries(test_fuzzy_profile_persistence PRIVATE myController2::fuzzy_controller)
+add_test(NAME fuzzy_profile_persistence COMMAND test_fuzzy_profile_persistence)
+
 if(MYCONTROLLER_BUILD_PC_CONTROL)
     add_executable(test_fuzzy_pc_bridge
         test_fuzzy_pc_bridge.c
@@ -71,6 +77,7 @@ if(WIN32 AND MYCONTROLLER_BUILD_SHARED)
         fuzzy_self_tuning_bridge
         fuzzy_temperature_profile
         fuzzy_profile_recommendation
+        fuzzy_profile_persistence
         PROPERTIES ENVIRONMENT "PATH=${_fuzzy_dll_path};$ENV{PATH}"
     )
 endif()
