@@ -208,12 +208,12 @@ static void test_bridge_import_rejected_during_tuning_decision(void)
 
     target.Status.EpisodeActive = true;
     assert(FB_FuzzySelfTuningBridge_ImportProfile(
-        &target, buffer, written) == FUZZY_PROFILE_PERSIST_INVALID_ARGUMENT);
+        &target, buffer, written) == FUZZY_PROFILE_PERSIST_BUSY);
     target.Status.EpisodeActive = false;
 
     target.Status.CandidateAvailable = true;
     assert(FB_FuzzySelfTuningBridge_ImportProfile(
-        &target, buffer, written) == FUZZY_PROFILE_PERSIST_INVALID_ARGUMENT);
+        &target, buffer, written) == FUZZY_PROFILE_PERSIST_BUSY);
 }
 
 int main(void)
