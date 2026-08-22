@@ -39,13 +39,10 @@ typedef struct
     bool RollbackRecommended;
     bool ApplyBlockedByScalingMode;
     uint32_t EpisodeCount;
-
-    /* Temperature-profile diagnostics. */
     int16_t ActiveRegion;
     int16_t CandidateRegion;
     float ActiveRegionConfidence;
     float CandidateRegionConfidence;
-
     FuzzyTunableParameters_t Current;
     FuzzyTunableParameters_t Candidate;
 } FuzzySelfTuningBridgeStatus_t;
@@ -57,97 +54,42 @@ typedef struct
     FB_FuzzyPerformanceMonitor_t Monitor;
     FB_FuzzySelfTuner_t Tuner;
     FB_FuzzyTemperatureProfile_t TemperatureProfile;
-
-    /* Exact rollback snapshot captured only when a candidate is explicitly applied. */
     FuzzyScalingConfig_t AppliedScalingConfigBackup;
     float AppliedFullPowerErrorRatioBackup;
     float AppliedPrecisionErrorRatioBackup;
     bool HasApplyBackup;
-
     float PreviousSV;
     bool Initialized;
 } FB_FuzzySelfTuningBridge_t;
 
 MY_API void FB_FuzzySelfTuningBridge_Init(FB_FuzzySelfTuningBridge_t *fb);
 MY_API void FB_FuzzySelfTuningBridge_Reset(FB_FuzzySelfTuningBridge_t *fb);
-
-MY_API void FB_FuzzySelfTuningBridge_SetShadowMode(
-    FB_FuzzySelfTuningBridge_t *fb,
-    bool shadowMode);
-
-MY_API bool FB_FuzzySelfTuningBridge_GetControllerParameters(
-    const FB_FuzzyController_t *controller,
-    FuzzyTunableParameters_t *parameters);
-
-MY_API bool FB_FuzzySelfTuningBridge_StartEpisode(
-    FB_FuzzySelfTuningBridge_t *fb,
-    const FB_FuzzyController_t *controller,
-    float sv,
-    float pv,
-    float pwm);
-
-MY_API void FB_FuzzySelfTuningBridge_Run(
-    FB_FuzzySelfTuningBridge_t *fb,
-    const FB_FuzzyController_t *controller,
-    float sv,
-    float pv,
-    float pwm);
-
-MY_API bool FB_FuzzySelfTuningBridge_GetCandidate(
-    const FB_FuzzySelfTuningBridge_t *fb,
-    FuzzyTunableParameters_t *candidate);
-
-MY_API const FuzzyPerformanceMetrics_t *FB_FuzzySelfTuningBridge_GetMetrics(
-    const FB_FuzzySelfTuningBridge_t *fb);
-
-MY_API const FuzzySelfTunerStatus_t *FB_FuzzySelfTuningBridge_GetTunerStatus(
-    const FB_FuzzySelfTuningBridge_t *fb);
-
-MY_API const FuzzyTemperatureRegion_t *FB_FuzzySelfTuningBridge_GetActiveRegion(
-    const FB_FuzzySelfTuningBridge_t *fb);
-
-MY_API const FuzzyTemperatureRegion_t *FB_FuzzySelfTuningBridge_GetCandidateRegion(
-    const FB_FuzzySelfTuningBridge_t *fb);
+MY_API void FB_FuzzySelfTuningBridge_SetShadowMode(FB_FuzzySelfTuningBridge_t *fb, bool shadowMode);
+MY_API bool FB_FuzzySelfTuningBridge_GetControllerParameters(const FB_FuzzyController_t *controller, FuzzyTunableParameters_t *parameters);
+MY_API bool FB_FuzzySelfTuningBridge_StartEpisode(FB_FuzzySelfTuningBridge_t *fb, const FB_FuzzyController_t *controller, float sv, float pv, float pwm);
+MY_API void FB_FuzzySelfTuningBridge_Run(FB_FuzzySelfTuningBridge_t *fb, const FB_FuzzyController_t *controller, float sv, float pv, float pwm);
+MY_API bool FB_FuzzySelfTuningBridge_GetCandidate(const FB_FuzzySelfTuningBridge_t *fb, FuzzyTunableParameters_t *candidate);
+MY_API const FuzzyPerformanceMetrics_t *FB_FuzzySelfTuningBridge_GetMetrics(const FB_FuzzySelfTuningBridge_t *fb);
+MY_API const FuzzySelfTunerStatus_t *FB_FuzzySelfTuningBridge_GetTunerStatus(const FB_FuzzySelfTuningBridge_t *fb);
+MY_API const FuzzyTemperatureRegion_t *FB_FuzzySelfTuningBridge_GetActiveRegion(const FB_FuzzySelfTuningBridge_t *fb);
+MY_API const FuzzyTemperatureRegion_t *FB_FuzzySelfTuningBridge_GetCandidateRegion(const FB_FuzzySelfTuningBridge_t *fb);
+MY_API bool FB_FuzzySelfTuningBridge_GetRecommendation(const FB_FuzzySelfTuningBridge_t *fb, float sv, FuzzyTemperatureRecommendation_t *recommendation);
+MY_API bool FB_FuzzySelfTuningBridge_GetInterpolatedRecommendation(const FB_FuzzySelfTuningBridge_t *fb, float sv, FuzzyTemperatureInterpolatedRecommendation_t *recommendation);
 
 /*
- * Read-only learned-profile recommendation. Uses conservative default
- * confidence thresholds (0.30 experimental / 0.70 high confidence).
- * This API never modifies controller parameters or tuning state.
+ * Convert an already learned HIGH_CONFIDENCE profile recommendation into a
+ * normal guarded Candidate. A fresh completed baseline episode near sv is
+ * required. This never changes ShadowMode and never writes controller values.
  */
-MY_API bool FB_FuzzySelfTuningBridge_GetRecommendation(
-    const FB_FuzzySelfTuningBridge_t *fb,
-    float sv,
-    FuzzyTemperatureRecommendation_t *recommendation);
-
-/*
- * Read-only smooth recommendation between neighboring learned region centers.
- * No controller write occurs. If interpolation cannot be performed safely,
- * the result falls back to the direct containing-region recommendation.
- */
-MY_API bool FB_FuzzySelfTuningBridge_GetInterpolatedRecommendation(
-    const FB_FuzzySelfTuningBridge_t *fb,
-    float sv,
-    FuzzyTemperatureInterpolatedRecommendation_t *recommendation);
-
-/* Reject a suggested candidate that has not been applied. */
-MY_API bool FB_FuzzySelfTuningBridge_RejectCandidate(
-    FB_FuzzySelfTuningBridge_t *fb);
-
-/*
- * Explicit write API. Never called automatically by Run().
- * ShadowMode must first be disabled by the application.
- * In the normal branch4 architecture Auto Scaling remains enabled: the candidate
- * is converted to persistent slow trim multipliers instead of overwriting the
- * fast adaptive targets directly.
- */
-MY_API bool FB_FuzzySelfTuningBridge_ApplyCandidate(
+MY_API bool FB_FuzzySelfTuningBridge_PromoteRecommendationToCandidate(
     FB_FuzzySelfTuningBridge_t *fb,
-    FB_FuzzyController_t *controller);
+    const FB_FuzzyController_t *controller,
+    float sv,
+    bool useInterpolation);
 
-/* Explicit physical rollback. Never executed automatically after verification. */
-MY_API bool FB_FuzzySelfTuningBridge_Rollback(
-    FB_FuzzySelfTuningBridge_t *fb,
-    FB_FuzzyController_t *controller);
+MY_API bool FB_FuzzySelfTuningBridge_RejectCandidate(FB_FuzzySelfTuningBridge_t *fb);
+MY_API bool FB_FuzzySelfTuningBridge_ApplyCandidate(FB_FuzzySelfTuningBridge_t *fb, FB_FuzzyController_t *controller);
+MY_API bool FB_FuzzySelfTuningBridge_Rollback(FB_FuzzySelfTuningBridge_t *fb, FB_FuzzyController_t *controller);
 
 #ifdef __cplusplus
 }
