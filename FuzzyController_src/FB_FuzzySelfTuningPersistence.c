@@ -47,7 +47,7 @@ FuzzyProfilePersistenceResult_e FB_FuzzySelfTuningBridge_ImportProfile(
         fb->Tuner.Status.CandidatePending ||
         fb->HasApplyBackup)
     {
-        return FUZZY_PROFILE_PERSIST_INVALID_ARGUMENT;
+        return FUZZY_PROFILE_PERSIST_BUSY;
     }
 
     result = FB_FuzzyProfilePersistence_Import(
