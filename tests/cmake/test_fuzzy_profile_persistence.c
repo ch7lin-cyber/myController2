@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "FB_FuzzyProfilePersistence.h"
+#include "FB_FuzzySelfTuningBridge.h"
 
 static int nearly_equal(float a, float b, float eps)
 {
@@ -133,7 +134,6 @@ static void test_invalid_counters_rejected_even_with_valid_crc(void)
     region3 = FUZZY_PROFILE_PERSIST_HEADER_SIZE + FUZZY_PROFILE_PERSIST_PAYLOAD_BASE +
               (3U * FUZZY_PROFILE_PERSIST_REGION_SIZE);
 
-    /* AcceptedCount=100 while ObservationCount is smaller. */
     buffer[region3 + 36U] = 100U;
     buffer[region3 + 37U] = 0U;
     buffer[region3 + 38U] = 0U;
@@ -163,6 +163,59 @@ static void test_export_rejects_small_buffer(void)
     assert(written == 0U);
 }
 
+static void test_bridge_idle_import_is_safe_and_read_only_to_controller(void)
+{
+    FB_FuzzySelfTuningBridge_t source;
+    FB_FuzzySelfTuningBridge_t target;
+    FuzzyTunableParameters_t p = learned_parameters();
+    uint8_t buffer[FUZZY_PROFILE_PERSIST_MAX_SIZE];
+    size_t written = 0U;
+    unsigned i;
+
+    FB_FuzzySelfTuningBridge_Init(&source);
+    FB_FuzzySelfTuningBridge_Init(&target);
+
+    for (i = 0U; i < 6U; ++i)
+    {
+        assert(FB_FuzzyTemperatureProfile_RecordObservation(&source.TemperatureProfile, 3U));
+        assert(FB_FuzzyTemperatureProfile_RecordAccepted(&source.TemperatureProfile, 3U, &p));
+    }
+
+    assert(FB_FuzzySelfTuningBridge_ExportProfile(
+        &source, buffer, sizeof(buffer), &written) == FUZZY_PROFILE_PERSIST_OK);
+    assert(FB_FuzzySelfTuningBridge_ImportProfile(
+        &target, buffer, written) == FUZZY_PROFILE_PERSIST_OK);
+
+    assert(target.Config.ShadowMode);
+    assert(!target.Status.CandidateAvailable);
+    assert(!target.Status.CandidateApplied);
+    assert(target.Status.ActiveRegion == FUZZY_SELF_TUNING_REGION_INVALID);
+    assert(target.TemperatureProfile.Regions[3].HasLearnedParameters);
+    assert(target.TemperatureProfile.Regions[3].AcceptedCount == 6U);
+}
+
+static void test_bridge_import_rejected_during_tuning_decision(void)
+{
+    FB_FuzzySelfTuningBridge_t source;
+    FB_FuzzySelfTuningBridge_t target;
+    uint8_t buffer[FUZZY_PROFILE_PERSIST_MAX_SIZE];
+    size_t written = 0U;
+
+    FB_FuzzySelfTuningBridge_Init(&source);
+    FB_FuzzySelfTuningBridge_Init(&target);
+    assert(FB_FuzzySelfTuningBridge_ExportProfile(
+        &source, buffer, sizeof(buffer), &written) == FUZZY_PROFILE_PERSIST_OK);
+
+    target.Status.EpisodeActive = true;
+    assert(FB_FuzzySelfTuningBridge_ImportProfile(
+        &target, buffer, written) == FUZZY_PROFILE_PERSIST_INVALID_ARGUMENT);
+    target.Status.EpisodeActive = false;
+
+    target.Status.CandidateAvailable = true;
+    assert(FB_FuzzySelfTuningBridge_ImportProfile(
+        &target, buffer, written) == FUZZY_PROFILE_PERSIST_INVALID_ARGUMENT);
+}
+
 int main(void)
 {
     test_round_trip_restores_profile_and_recomputes_confidence();
@@ -170,5 +223,7 @@ int main(void)
     test_bad_magic_and_version_are_rejected();
     test_invalid_counters_rejected_even_with_valid_crc();
     test_export_rejects_small_buffer();
+    test_bridge_idle_import_is_safe_and_read_only_to_controller();
+    test_bridge_import_rejected_during_tuning_decision();
     return 0;
 }
