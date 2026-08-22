@@ -33,25 +33,17 @@ typedef struct
     float TargetSettlingTime_s;
     float TargetSteadyStateError_c;
     uint16_t MaxZeroCrossCount;
-
     float WeightOvershoot;
     float WeightRiseTime;
     float WeightSettlingTime;
     float WeightIAE;
     float WeightSteadyStateError;
     float WeightPWMActivity;
-
     float GainStepUp;
     float GainStepDown;
     float DampingStepUp;
     float ApproachStep;
     float MinimumImprovement;
-
-    /*
-     * Candidate verification must use a sufficiently similar response episode.
-     * This avoids comparing, for example, a 25->175 C heat-up against a
-     * 120->130 C step as if their raw performance costs were equivalent.
-     */
     float VerificationTargetTolerance_c;
     float VerificationStepRatioTolerance;
     float MinimumStepMagnitude_c;
@@ -76,38 +68,31 @@ typedef struct
     FB_FuzzyParameterGuard_t Guard;
     FuzzyTunableParameters_t Baseline;
     FuzzyTunableParameters_t Candidate;
-
-    /* Operating context of the accepted baseline episode. */
     float BaselineTargetSV_c;
     float BaselineStepMagnitude_c;
 } FB_FuzzySelfTuner_t;
 
 MY_API void FB_FuzzySelfTuner_Init(FB_FuzzySelfTuner_t *fb);
 MY_API void FB_FuzzySelfTuner_Reset(FB_FuzzySelfTuner_t *fb);
-MY_API bool FB_FuzzySelfTuner_SetConfig(
-    FB_FuzzySelfTuner_t *fb,
-    const FuzzySelfTunerConfig_t *config);
-MY_API float FB_FuzzySelfTuner_CalculateCost(
-    const FB_FuzzySelfTuner_t *fb,
-    const FuzzyPerformanceMetrics_t *metrics);
-MY_API bool FB_FuzzySelfTuner_IsComparableEpisode(
-    const FB_FuzzySelfTuner_t *fb,
-    const FuzzyPerformanceMetrics_t *metrics);
-MY_API bool FB_FuzzySelfTuner_EvaluateEpisode(
-    FB_FuzzySelfTuner_t *fb,
-    const FuzzyPerformanceMetrics_t *metrics,
-    const FuzzyTunableParameters_t *current,
-    FuzzyTunableParameters_t *nextParameters);
-MY_API void FB_FuzzySelfTuner_AcceptCurrent(
-    FB_FuzzySelfTuner_t *fb,
-    const FuzzyTunableParameters_t *parameters,
-    float cost);
-MY_API bool FB_FuzzySelfTuner_Rollback(
-    FB_FuzzySelfTuner_t *fb,
-    FuzzyTunableParameters_t *parameters);
-
-/* Cancel a suggested candidate that was never applied. No rollback is counted. */
+MY_API bool FB_FuzzySelfTuner_SetConfig(FB_FuzzySelfTuner_t *fb, const FuzzySelfTunerConfig_t *config);
+MY_API float FB_FuzzySelfTuner_CalculateCost(const FB_FuzzySelfTuner_t *fb, const FuzzyPerformanceMetrics_t *metrics);
+MY_API bool FB_FuzzySelfTuner_IsComparableEpisode(const FB_FuzzySelfTuner_t *fb, const FuzzyPerformanceMetrics_t *metrics);
+MY_API bool FB_FuzzySelfTuner_EvaluateEpisode(FB_FuzzySelfTuner_t *fb, const FuzzyPerformanceMetrics_t *metrics, const FuzzyTunableParameters_t *current, FuzzyTunableParameters_t *nextParameters);
+MY_API void FB_FuzzySelfTuner_AcceptCurrent(FB_FuzzySelfTuner_t *fb, const FuzzyTunableParameters_t *parameters, float cost);
+MY_API bool FB_FuzzySelfTuner_Rollback(FB_FuzzySelfTuner_t *fb, FuzzyTunableParameters_t *parameters);
 MY_API void FB_FuzzySelfTuner_CancelCandidate(FB_FuzzySelfTuner_t *fb);
+
+/*
+ * Prepare a guarded candidate supplied by an external source (for example an
+ * accepted temperature-profile recommendation). A completed fresh baseline
+ * episode is mandatory. This function does not write controller parameters.
+ */
+MY_API bool FB_FuzzySelfTuner_PrepareExternalCandidate(
+    FB_FuzzySelfTuner_t *fb,
+    const FuzzyPerformanceMetrics_t *baselineMetrics,
+    const FuzzyTunableParameters_t *current,
+    const FuzzyTunableParameters_t *requested,
+    FuzzyTunableParameters_t *candidate);
 
 #ifdef __cplusplus
 }
