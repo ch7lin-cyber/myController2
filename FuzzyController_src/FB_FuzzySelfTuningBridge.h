@@ -16,6 +16,7 @@
 #include "FB_FuzzyPerformanceMonitor.h"
 #include "FB_FuzzySelfTuner.h"
 #include "FB_FuzzyTemperatureProfile.h"
+#include "FB_FuzzyProfilePersistence.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -86,6 +87,22 @@ MY_API bool FB_FuzzySelfTuningBridge_PromoteRecommendationToCandidate(
     const FB_FuzzyController_t *controller,
     float sv,
     bool useInterpolation);
+
+/*
+ * Persistence wrappers. Export is read-only. Import is accepted only while the
+ * tuning bridge is idle: no active episode, candidate, applied candidate, or
+ * rollback decision may be pending. Neither API changes controller parameters.
+ */
+MY_API FuzzyProfilePersistenceResult_e FB_FuzzySelfTuningBridge_ExportProfile(
+    const FB_FuzzySelfTuningBridge_t *fb,
+    uint8_t *buffer,
+    size_t capacity,
+    size_t *writtenSize);
+
+MY_API FuzzyProfilePersistenceResult_e FB_FuzzySelfTuningBridge_ImportProfile(
+    FB_FuzzySelfTuningBridge_t *fb,
+    const uint8_t *buffer,
+    size_t size);
 
 MY_API bool FB_FuzzySelfTuningBridge_RejectCandidate(FB_FuzzySelfTuningBridge_t *fb);
 MY_API bool FB_FuzzySelfTuningBridge_ApplyCandidate(FB_FuzzySelfTuningBridge_t *fb, FB_FuzzyController_t *controller);
