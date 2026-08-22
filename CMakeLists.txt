@@ -36,6 +36,7 @@ set(FUZZY_CONTROLLER_SOURCES
     FuzzyController_src/FB_FuzzySelfTuningRecommendation.c
     FuzzyController_src/FB_FuzzyTemperatureProfile.c
     FuzzyController_src/FB_FuzzyProfilePersistence.c
+    FuzzyController_src/FB_FuzzySelfTuningPersistence.c
 )
 
 if(MYCONTROLLER_BUILD_SHARED)
